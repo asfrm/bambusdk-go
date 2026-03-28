@@ -1,4 +1,4 @@
-module github.com/bambulabs_api/go
+module github.com/bambuapi-go/bambuapi-go
 
 go 1.21
 

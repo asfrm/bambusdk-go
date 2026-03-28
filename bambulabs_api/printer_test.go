@@ -3,22 +3,22 @@ package bambulabs_api
 import (
 	"testing"
 
-	"github.com/bambulabs_api/go/bambulabs_api/states"
-	"github.com/bambulabs_api/go/bambulabs_api/printerinfo"
-	"github.com/bambulabs_api/go/bambulabs_api/filamentinfo"
+	"github.com/bambuapi-go/bambuapi-go/bambulabs_api/filamentinfo"
+	"github.com/bambuapi-go/bambuapi-go/bambulabs_api/printerinfo"
+	"github.com/bambuapi-go/bambuapi-go/bambulabs_api/states"
 )
 
 func TestNewPrinter(t *testing.T) {
 	printer := NewPrinter("192.168.1.100", "12345678", "TEST123")
-	
+
 	if printer.IPAddress != "192.168.1.100" {
 		t.Errorf("Expected IPAddress to be 192.168.1.100, got %s", printer.IPAddress)
 	}
-	
+
 	if printer.AccessCode != "12345678" {
 		t.Errorf("Expected AccessCode to be 12345678, got %s", printer.AccessCode)
 	}
-	
+
 	if printer.Serial != "TEST123" {
 		t.Errorf("Expected Serial to be TEST123, got %s", printer.Serial)
 	}
@@ -35,7 +35,7 @@ func TestPrintStatus(t *testing.T) {
 		{-1, "UNKNOWN"},
 		{999, "UNKNOWN"},
 	}
-	
+
 	for _, tt := range tests {
 		status := states.PrintStatus(tt.value)
 		if status.String() != tt.expected {
@@ -54,7 +54,7 @@ func TestGcodeState(t *testing.T) {
 		{"PAUSE", states.GcodeStatePause},
 		{"INVALID", states.GcodeStateUnknown},
 	}
-	
+
 	for _, tt := range tests {
 		result := states.ParseGcodeState(tt.input)
 		if result != tt.expected {
@@ -72,7 +72,7 @@ func TestNozzleType(t *testing.T) {
 		{"hardened_steel", printerinfo.NozzleTypeHardenedSteel},
 		{"invalid", printerinfo.NozzleTypeStainlessSteel},
 	}
-	
+
 	for _, tt := range tests {
 		result := printerinfo.ParseNozzleType(tt.input)
 		if result != tt.expected {
@@ -91,7 +91,7 @@ func TestPrinterType(t *testing.T) {
 		{"X1C", printerinfo.PrinterTypeX1C},
 		{"INVALID", printerinfo.PrinterTypeP1S},
 	}
-	
+
 	for _, tt := range tests {
 		result := printerinfo.ParsePrinterType(tt.input)
 		if result != tt.expected {
@@ -109,7 +109,7 @@ func TestFilamentByName(t *testing.T) {
 		{"BAMBU_ABS", false},
 		{"INVALID_FILAMENT", true},
 	}
-	
+
 	for _, tt := range tests {
 		_, err := filamentinfo.FilamentByName(tt.name)
 		if (err != nil) != tt.wantError {
@@ -121,19 +121,19 @@ func TestFilamentByName(t *testing.T) {
 func TestFilamentSettings(t *testing.T) {
 	filament := filamentinfo.FilamentBambuPLABasic
 	settings := filament.GetSettings()
-	
+
 	if settings.TrayInfoIdx != "GFA00" {
 		t.Errorf("Expected TrayInfoIdx to be GFA00, got %s", settings.TrayInfoIdx)
 	}
-	
+
 	if settings.NozzleTempMin != 190 {
 		t.Errorf("Expected NozzleTempMin to be 190, got %d", settings.NozzleTempMin)
 	}
-	
+
 	if settings.NozzleTempMax != 250 {
 		t.Errorf("Expected NozzleTempMax to be 250, got %d", settings.NozzleTempMax)
 	}
-	
+
 	if settings.TrayType != "PLA" {
 		t.Errorf("Expected TrayType to be PLA, got %s", settings.TrayType)
 	}
@@ -141,44 +141,44 @@ func TestFilamentSettings(t *testing.T) {
 
 func TestFilamentTrayFromDict(t *testing.T) {
 	dict := map[string]interface{}{
-		"k":                  0.5,
-		"n":                  1,
-		"tag_uid":            "TEST123",
-		"tray_id_name":       "Bambu PLA",
-		"tray_info_idx":      "GFA00",
-		"tray_type":          "PLA",
-		"tray_sub_brands":    "",
-		"tray_color":         "FF0000FF",
-		"tray_weight":        "1000",
-		"tray_diameter":      "200",
-		"tray_temp":          "25",
-		"tray_time":          "2024-01-01",
-		"bed_temp_type":      "1",
-		"bed_temp":           "60",
-		"nozzle_temp_max":    250,
-		"nozzle_temp_min":    190,
-		"xcam_info":          "",
-		"tray_uuid":          "UUID123",
+		"k":               0.5,
+		"n":               1,
+		"tag_uid":         "TEST123",
+		"tray_id_name":    "Bambu PLA",
+		"tray_info_idx":   "GFA00",
+		"tray_type":       "PLA",
+		"tray_sub_brands": "",
+		"tray_color":      "FF0000FF",
+		"tray_weight":     "1000",
+		"tray_diameter":   "200",
+		"tray_temp":       "25",
+		"tray_time":       "2024-01-01",
+		"bed_temp_type":   "1",
+		"bed_temp":        "60",
+		"nozzle_temp_max": 250,
+		"nozzle_temp_min": 190,
+		"xcam_info":       "",
+		"tray_uuid":       "UUID123",
 	}
-	
+
 	tray := filamentinfo.FilamentTrayFromDict(dict)
-	
+
 	if tray.K != 0.5 {
 		t.Errorf("Expected K to be 0.5, got %f", tray.K)
 	}
-	
+
 	if tray.N != 1 {
 		t.Errorf("Expected N to be 1, got %d", tray.N)
 	}
-	
+
 	if tray.TrayInfoIdx != "GFA00" {
 		t.Errorf("Expected TrayInfoIdx to be GFA00, got %s", tray.TrayInfoIdx)
 	}
-	
+
 	if tray.NozzleTempMin != 190 {
 		t.Errorf("Expected NozzleTempMin to be 190, got %d", tray.NozzleTempMin)
 	}
-	
+
 	if tray.NozzleTempMax != 250 {
 		t.Errorf("Expected NozzleTempMax to be 250, got %d", tray.NozzleTempMax)
 	}
@@ -196,7 +196,7 @@ func TestIsValidNozzleDiameter(t *testing.T) {
 		{0.5, false},
 		{1.0, false},
 	}
-	
+
 	for _, tt := range tests {
 		result := printerinfo.IsValidNozzleDiameter(tt.diameter)
 		if result != tt.expected {

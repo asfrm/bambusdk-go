@@ -8,13 +8,13 @@ import (
 	_ "image/jpeg"
 	"io"
 
-	"github.com/bambulabs_api/go/bambulabs_api/ams"
-	"github.com/bambulabs_api/go/bambulabs_api/cameraclient"
-	"github.com/bambulabs_api/go/bambulabs_api/filamentinfo"
-	"github.com/bambulabs_api/go/bambulabs_api/ftpclient"
-	"github.com/bambulabs_api/go/bambulabs_api/mqttclient"
-	"github.com/bambulabs_api/go/bambulabs_api/printerinfo"
-	"github.com/bambulabs_api/go/bambulabs_api/states"
+	"github.com/bambuapi-go/bambuapi-go/bambulabs_api/ams"
+	"github.com/bambuapi-go/bambuapi-go/bambulabs_api/cameraclient"
+	"github.com/bambuapi-go/bambuapi-go/bambulabs_api/filamentinfo"
+	"github.com/bambuapi-go/bambuapi-go/bambulabs_api/ftpclient"
+	"github.com/bambuapi-go/bambuapi-go/bambulabs_api/mqttclient"
+	"github.com/bambuapi-go/bambuapi-go/bambulabs_api/printerinfo"
+	"github.com/bambuapi-go/bambuapi-go/bambulabs_api/states"
 )
 
 // Printer is the main client for connecting to and controlling a Bambu Lab 3D printer

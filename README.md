@@ -1,6 +1,9 @@
-# Bambu Lab API - Go
+# bambuapi-go
 
 Native Go implementation of the Bambu Lab 3D Printer API.
+
+> **Note:** This is a native Go port of the Python [bambulabs_api](https://github.com/BambuTools/bambulabs_api) project.
+> All credit for the original API design and reverse-engineering goes to the [BambuTools team](https://github.com/BambuTools/bambulabs_api).
 
 ## Features
 
@@ -13,6 +16,12 @@ Native Go implementation of the Bambu Lab 3D Printer API.
 - **Print Management**: Start, stop, pause, resume prints
 - **G-code Commands**: Send custom G-code commands
 
+## Installation
+
+```bash
+go get github.com/bambuapi-go/bambuapi-go/bambulabs_api
+```
+
 ## Quick Start
 
 ```go
@@ -22,7 +31,7 @@ import (
     "fmt"
     "time"
     
-    bl "github.com/bambulabs_api/go/bambulabs_api"
+    bl "github.com/bambuapi-go/bambuapi-go/bambulabs_api"
 )
 
 func main() {
@@ -299,4 +308,12 @@ MIT License - See LICENSE file for details
 
 ## Credits
 
-Based on the Python implementation at https://github.com/BambuTools/bambulabs_api
+This Go implementation is based on the Python [bambulabs_api](https://github.com/BambuTools/bambulabs_api) project.
+
+**Original Python API Authors:**
+- Chris Ioannidis (@chris.ioannidis23)
+- Haotian Wu (@ohmdelta)
+
+**Original Project:** https://github.com/BambuTools/bambulabs_api
+
+Special thanks to the BambuTools community for reverse-engineering the Bambu Lab printer protocol.

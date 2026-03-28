@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	bl "github.com/bambulabs_api/go/bambulabs_api"
+	bl "github.com/bambuapi-go/bambuapi-go/bambulabs_api"
 )
 
 func main() {
