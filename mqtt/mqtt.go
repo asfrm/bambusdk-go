@@ -257,6 +257,102 @@ func (c *PrinterMQTTClient) getInfoValue(key string, defaultValue interface{}) i
 	return defaultValue
 }
 
+// getFloat64 safely extracts a float64 value from the "print" section.
+// It handles int, float64, and string types, converting them to float64.
+// Returns defaultValue if the key doesn't exist or conversion fails.
+func (c *PrinterMQTTClient) getFloat64(key string, defaultValue float64) float64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if printData, ok := c.data["print"].(map[string]interface{}); ok {
+		if val, ok := printData[key]; ok {
+			switch v := val.(type) {
+			case float64:
+				return v
+			case int:
+				return float64(v)
+			case int64:
+				return float64(v)
+			case string:
+				if parsed, err := strconv.ParseFloat(v, 64); err == nil {
+					return parsed
+				}
+			case json.Number:
+				if parsed, err := v.Float64(); err == nil {
+					return parsed
+				}
+			}
+		}
+	}
+	return defaultValue
+}
+
+// getInt safely extracts an int value from the "print" section.
+// It handles int, float64, and string types, converting them to int.
+// Returns defaultValue if the key doesn't exist or conversion fails.
+func (c *PrinterMQTTClient) getInt(key string, defaultValue int) int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if printData, ok := c.data["print"].(map[string]interface{}); ok {
+		if val, ok := printData[key]; ok {
+			switch v := val.(type) {
+			case float64:
+				return int(v)
+			case int:
+				return v
+			case int64:
+				return int(v)
+			case string:
+				if parsed, err := strconv.Atoi(v); err == nil {
+					return parsed
+				}
+			case json.Number:
+				if parsed, err := v.Int64(); err == nil {
+					return int(parsed)
+				}
+			}
+		}
+	}
+	return defaultValue
+}
+
+// getString safely extracts a string value from the "print" section.
+// It handles string types and converts other types to string if possible.
+// Returns defaultValue if the key doesn't exist or conversion fails.
+func (c *PrinterMQTTClient) getString(key string, defaultValue string) string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if printData, ok := c.data["print"].(map[string]interface{}); ok {
+		if val, ok := printData[key]; ok {
+			switch v := val.(type) {
+			case string:
+				return v
+			case float64:
+				return fmt.Sprintf("%v", v)
+			case int:
+				return fmt.Sprintf("%d", v)
+			case bool:
+				return fmt.Sprintf("%v", v)
+			}
+		}
+	}
+	return defaultValue
+}
+
+// getPrintMap safely gets the "print" map for nested access.
+// Returns nil if not available.
+func (c *PrinterMQTTClient) getPrintMap() map[string]interface{} {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if printData, ok := c.data["print"].(map[string]interface{}); ok {
+		return printData
+	}
+	return nil
+}
+
 // publishCommand publishes a command to the MQTT server.
 func (c *PrinterMQTTClient) publishCommand(payload map[string]interface{}) bool {
 	if !c.client.IsConnected() {
@@ -325,72 +421,49 @@ func (c *PrinterMQTTClient) getFirmwareVersion() string {
 
 // GetLastPrintPercentage gets the print completion percentage.
 func (c *PrinterMQTTClient) GetLastPrintPercentage() int {
-	val := c.getPrintValue("mc_percent", 0)
-	switch v := val.(type) {
-	case float64:
-		return int(v)
-	case int:
-		return v
-	}
-	return 0
+	return c.getInt("mc_percent", 0)
 }
 
 // GetRemainingTime gets the remaining print time in seconds.
 func (c *PrinterMQTTClient) GetRemainingTime() int {
-	val := c.getPrintValue("mc_remaining_time", 0)
-	switch v := val.(type) {
-	case float64:
-		return int(v)
-	case int:
-		return v
-	}
-	return 0
+	return c.getInt("mc_remaining_time", 0)
 }
 
 // GetPrinterState gets the printer G-code state.
 func (c *PrinterMQTTClient) GetPrinterState() states.GcodeState {
-	state, ok := c.getPrintValue("gcode_state", "").(string)
-	if !ok {
-		return states.GcodeStateUnknown
-	}
+	state := c.getString("gcode_state", "")
 	return states.ParseGcodeState(state)
 }
 
 // GetCurrentState gets the current printer status.
 func (c *PrinterMQTTClient) GetCurrentState() states.PrintStatus {
-	status := c.getPrintValue("stg_cur", -1)
+	status := c.getInt("stg_cur", -1)
 	return states.ParsePrintStatus(status)
 }
 
 // GetPrintSpeed gets the print speed.
 func (c *PrinterMQTTClient) GetPrintSpeed() int {
-	speed := c.getPrintValue("spd_mag", 100)
-	switch v := speed.(type) {
-	case float64:
-		return int(v)
-	case int:
-		return v
-	}
-	return 100
+	return c.getInt("spd_mag", 100)
 }
 
 // GetFileName gets the current/last print file name.
 func (c *PrinterMQTTClient) GetFileName() string {
-	name, ok := c.getPrintValue("gcode_file", "").(string)
-	if !ok {
-		return ""
-	}
-	return name
+	return c.getString("gcode_file", "")
 }
 
 // GetLightState gets the printer light state.
 func (c *PrinterMQTTClient) GetLightState() string {
-	lightsReport, ok := c.getPrintValue("lights_report", []interface{}{}).([]interface{})
-	if !ok || len(lightsReport) == 0 {
+	lightsReport := c.getPrintValue("lights_report", []interface{}{})
+	if lightsReport == nil {
 		return "unknown"
 	}
 
-	if light, ok := lightsReport[0].(map[string]interface{}); ok {
+	lights, ok := lightsReport.([]interface{})
+	if !ok || len(lights) == 0 {
+		return "unknown"
+	}
+
+	if light, ok := lights[0].(map[string]interface{}); ok {
 		if mode, ok := light["mode"].(string); ok {
 			return mode
 		}
@@ -418,42 +491,28 @@ func (c *PrinterMQTTClient) TurnLightOff() bool {
 
 // GetBedTemperature gets the bed temperature.
 func (c *PrinterMQTTClient) GetBedTemperature() float64 {
-	temp := c.getPrintValue("bed_temper", 0.0)
-	switch v := temp.(type) {
-	case float64:
-		return v
-	case int:
-		return float64(v)
-	}
-	return 0.0
+	return c.getFloat64("bed_temper", 0.0)
 }
 
 // GetNozzleTemperature gets the nozzle temperature.
 func (c *PrinterMQTTClient) GetNozzleTemperature() float64 {
-	temp := c.getPrintValue("nozzle_temper", 0.0)
-	switch v := temp.(type) {
-	case float64:
-		return v
-	case int:
-		return float64(v)
-	}
-	return 0.0
+	return c.getFloat64("nozzle_temper", 0.0)
 }
 
 // GetChamberTemperature gets the chamber temperature.
 func (c *PrinterMQTTClient) GetChamberTemperature() float64 {
-	temp := c.getPrintValue("chamber_temper", nil)
-	if temp != nil {
-		switch v := temp.(type) {
-		case float64:
-			return v
-		case int:
-			return float64(v)
-		}
+	temp := c.getFloat64("chamber_temper", -999.0)
+	if temp != -999.0 {
+		return temp
 	}
 
 	// Fallback to device.ctc.info.temp
-	if device, ok := c.getPrintValue("device", nil).(map[string]interface{}); ok {
+	printMap := c.getPrintMap()
+	if printMap == nil {
+		return 0.0
+	}
+
+	if device, ok := printMap["device"].(map[string]interface{}); ok {
 		if ctc, ok := device["ctc"].(map[string]interface{}); ok {
 			if info, ok := ctc["info"].(map[string]interface{}); ok {
 				if t, ok := info["temp"].(float64); ok {
@@ -467,59 +526,28 @@ func (c *PrinterMQTTClient) GetChamberTemperature() float64 {
 
 // CurrentLayerNum gets the current layer number.
 func (c *PrinterMQTTClient) CurrentLayerNum() int {
-	num := c.getPrintValue("layer_num", 0)
-	switch v := num.(type) {
-	case float64:
-		return int(v)
-	case int:
-		return v
-	}
-	return 0
+	return c.getInt("layer_num", 0)
 }
 
 // TotalLayerNum gets the total layer number.
 func (c *PrinterMQTTClient) TotalLayerNum() int {
-	num := c.getPrintValue("total_layer_num", 0)
-	switch v := num.(type) {
-	case float64:
-		return int(v)
-	case int:
-		return v
-	}
-	return 0
+	return c.getInt("total_layer_num", 0)
 }
 
 // NozzleDiameter gets the nozzle diameter.
 func (c *PrinterMQTTClient) NozzleDiameter() float64 {
-	diameter := c.getPrintValue("nozzle_diameter", 0.4)
-	switch v := diameter.(type) {
-	case float64:
-		return v
-	case int:
-		return float64(v)
-	}
-	return 0.4
+	return c.getFloat64("nozzle_diameter", 0.4)
 }
 
 // NozzleType gets the nozzle type.
 func (c *PrinterMQTTClient) NozzleType() printerinfo.NozzleType {
-	nozzleType, ok := c.getPrintValue("nozzle_type", "stainless_steel").(string)
-	if !ok {
-		return printerinfo.NozzleTypeStainlessSteel
-	}
+	nozzleType := c.getString("nozzle_type", "stainless_steel")
 	return printerinfo.ParseNozzleType(nozzleType)
 }
 
 // GetFanGear gets the consolidated fan value.
 func (c *PrinterMQTTClient) GetFanGear() int {
-	gear := c.getPrintValue("fan_gear", 0)
-	switch v := gear.(type) {
-	case float64:
-		return int(v)
-	case int:
-		return v
-	}
-	return 0
+	return c.getInt("fan_gear", 0)
 }
 
 // GetPartFanSpeed gets the part fan speed.
@@ -873,6 +901,12 @@ func (c *PrinterMQTTClient) GetSkippedObjects() []int {
 				result = append(result, int(v))
 			case int:
 				result = append(result, v)
+			case int64:
+				result = append(result, int(v))
+			case string:
+				if parsed, err := strconv.Atoi(v); err == nil {
+					result = append(result, parsed)
+				}
 			}
 		}
 	}
@@ -1111,50 +1145,27 @@ func (c *PrinterMQTTClient) VTTray() filament.FilamentTray {
 
 // SubtaskName gets the current subtask name.
 func (c *PrinterMQTTClient) SubtaskName() string {
-	name, ok := c.getPrintValue("subtask_name", "").(string)
-	if !ok {
-		return ""
-	}
-	return name
+	return c.getString("subtask_name", "")
 }
 
 // GcodeFile gets the current gcode file name.
 func (c *PrinterMQTTClient) GcodeFile() string {
-	file, ok := c.getPrintValue("gcode_file", "").(string)
-	if !ok {
-		return ""
-	}
-	return file
+	return c.getString("gcode_file", "")
 }
 
 // PrintErrorCode gets the print error code.
 func (c *PrinterMQTTClient) PrintErrorCode() int {
-	code := c.getPrintValue("print_error", 0)
-	switch v := code.(type) {
-	case float64:
-		return int(v)
-	case int:
-		return v
-	}
-	return 0
+	return c.getInt("print_error", 0)
 }
 
 // PrintType gets the print type (cloud/local).
 func (c *PrinterMQTTClient) PrintType() string {
-	ptype, ok := c.getPrintValue("print_type", "").(string)
-	if !ok {
-		return ""
-	}
-	return ptype
+	return c.getString("print_type", "")
 }
 
 // WifiSignal gets the WiFi signal strength in dBm.
 func (c *PrinterMQTTClient) WifiSignal() string {
-	signal, ok := c.getPrintValue("wifi_signal", "").(string)
-	if !ok {
-		return ""
-	}
-	return signal
+	return c.getString("wifi_signal", "")
 }
 
 // Reboot reboots the printer.

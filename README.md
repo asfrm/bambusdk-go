@@ -1,4 +1,4 @@
-# bambuapi-go
+`# bambuapi-go
 
 Native Go implementation of the Bambu Lab 3D Printer API.
 
