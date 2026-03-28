@@ -8,6 +8,7 @@ import (
 	"image"
 	_ "image/jpeg"
 	"io"
+	"time"
 
 	"github.com/asfrm/bambuapi-go/ams"
 	"github.com/asfrm/bambuapi-go/camera"
@@ -42,19 +43,84 @@ func NewPrinter(ipAddress, accessCode, serial string) *Printer {
 }
 
 // Connect connects to the printer (MQTT and Camera).
+// It automatically requests full state and waits for the first complete payload.
+// Returns an error if connection fails or times out waiting for data (10s timeout).
 func (p *Printer) Connect() error {
-	err := p.MQTTClient.Start()
-	if err != nil {
+	// Disable aggressive mode to avoid blocking on info requests
+	p.MQTTClient.SetPushallAggressive(false)
+
+	// Start MQTT client
+	if err := p.MQTTClient.Start(); err != nil {
 		return fmt.Errorf("failed to start MQTT client: %w", err)
 	}
-	p.CameraClient.Start()
-	return nil
+
+	// Wait for MQTT connection with timeout
+	timeout := time.After(10 * time.Second)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timeout:
+			p.MQTTClient.Stop()
+			return fmt.Errorf("timeout waiting for MQTT connection")
+		case <-ticker.C:
+			if p.MQTTClient.IsConnected() {
+				ticker.Stop()
+				break
+			}
+		}
+		break
+	}
+
+	// Wait for initial data payload
+	time.Sleep(300 * time.Millisecond)
+
+	// Request full state from printer
+	p.MQTTClient.RequestFullState()
+
+	// Wait for full state to arrive (check for key fields)
+	dataTimeout := time.After(5 * time.Second)
+	dataTicker := time.NewTicker(100 * time.Millisecond)
+	defer dataTicker.Stop()
+
+	for {
+		select {
+		case <-dataTimeout:
+			// Timeout but continue with whatever data we have
+			return nil
+		case <-dataTicker.C:
+			dump := p.MQTTClient.Dump()
+			if printData, ok := dump["print"].(map[string]interface{}); ok {
+				// Check for key fields that indicate full state
+				if _, hasBed := printData["bed_temper"]; hasBed {
+					if _, hasAms := printData["ams"]; hasAms {
+						return nil // Full state received
+					}
+				}
+			}
+		}
+	}
 }
 
 // Disconnect disconnects from the printer.
 func (p *Printer) Disconnect() {
 	p.MQTTClient.Stop()
 	p.CameraClient.Stop()
+}
+
+// SetStateUpdateCallback sets a callback function to be called on each state update.
+// The callback is triggered whenever new MQTT data is received and parsed.
+// Only one callback can be registered at a time.
+func (p *Printer) SetStateUpdateCallback(callback func()) {
+	p.MQTTClient.SetStateUpdateCallback(callback)
+}
+
+// GetUpdateChannel returns a channel that receives a signal on each state update.
+// External applications can use this to react to real-time printer updates.
+// The caller is responsible for reading from the channel to prevent blocking.
+func (p *Printer) GetUpdateChannel() <-chan struct{} {
+	return p.MQTTClient.GetUpdateChannel()
 }
 
 // CameraClientAlive checks if the camera client is running.

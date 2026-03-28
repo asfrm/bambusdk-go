@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"regexp"
@@ -21,12 +22,25 @@ import (
 	"github.com/asfrm/bambuapi-go/states"
 )
 
+// StateUpdateCallback is a callback function type for state updates.
+type StateUpdateCallback func()
+
 var (
-	debugLog = log.New(os.Stdout, "[DEBUG] ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
-	errorLog = log.New(os.Stderr, "[ERROR] ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
-	infoLog  = log.New(os.Stdout, "[INFO] ", log.Ldate|log.Ltime|log.Lmicroseconds)
-	warnLog  = log.New(os.Stdout, "[WARN] ", log.Ldate|log.Ltime|log.Lmicroseconds)
+	// Debug logging is disabled by default. Set BAMBU_DEBUG=1 to enable.
+	debugLog *log.Logger
+	errorLog = log.New(os.Stderr, "[ERROR] ", log.Ldate|log.Ltime|log.Lshortfile)
+	infoLog  = log.New(os.Stdout, "[INFO] ", log.Ldate|log.Ltime)
+	warnLog  = log.New(os.Stdout, "[WARN] ", log.Ldate|log.Ltime)
 )
+
+func init() {
+	if os.Getenv("BAMBU_DEBUG") == "1" {
+		debugLog = log.New(os.Stdout, "[DEBUG] ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
+	} else {
+		// Discard debug logs by default
+		debugLog = log.New(io.Discard, "", 0)
+	}
+}
 
 // PrinterMQTTClient handles MQTT communication with the printer.
 type PrinterMQTTClient struct {
@@ -52,6 +66,10 @@ type PrinterMQTTClient struct {
 
 	connected bool
 	ready     bool
+
+	// Callback system for state updates
+	onUpdateCallback StateUpdateCallback
+	updateChannel    chan struct{}
 }
 
 // NewPrinterMQTTClient creates a new MQTT client.
@@ -87,6 +105,7 @@ func NewPrinterMQTTClient(hostname, access, printerSerial string, username strin
 			PrinterType:     printerinfo.PrinterTypeP1S,
 			FirmwareVersion: "01.04.00.00",
 		},
+		updateChannel: make(chan struct{}, 10), // Buffered channel to avoid blocking
 	}
 
 	opts := mqtt.NewClientOptions()
@@ -132,6 +151,38 @@ func (c *PrinterMQTTClient) SetPushallAggressive(enabled bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.pushallAggressive = enabled
+}
+
+// SetStateUpdateCallback sets a callback function to be called on each state update.
+// Only one callback can be registered at a time.
+func (c *PrinterMQTTClient) SetStateUpdateCallback(callback StateUpdateCallback) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.onUpdateCallback = callback
+}
+
+// GetUpdateChannel returns a channel that receives a signal on each state update.
+// The caller is responsible for reading from the channel to prevent blocking.
+func (c *PrinterMQTTClient) GetUpdateChannel() <-chan struct{} {
+	return c.updateChannel
+}
+
+// triggerUpdateCallbacks triggers the callback and sends to the update channel.
+func (c *PrinterMQTTClient) triggerUpdateCallbacks() {
+	c.mu.RLock()
+	callback := c.onUpdateCallback
+	c.mu.RUnlock()
+
+	if callback != nil {
+		callback()
+	}
+
+	// Non-blocking send to channel
+	select {
+	case c.updateChannel <- struct{}{}:
+	default:
+		// Channel full, skip this update to avoid blocking
+	}
 }
 
 // Connect connects to the MQTT server.
@@ -249,6 +300,9 @@ func (c *PrinterMQTTClient) manualUpdate(doc map[string]interface{}) {
 		c.printerInfo.FirmwareVersion = firmwareVersion
 		c.mu.Unlock()
 	}
+
+	// Trigger state update callbacks
+	c.triggerUpdateCallbacks()
 }
 
 // getMapKeys returns the top-level keys of a map for debugging

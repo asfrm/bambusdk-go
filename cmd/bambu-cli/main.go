@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/asfrm/bambuapi-go/filament"
 	"github.com/asfrm/bambuapi-go/printer"
 	"github.com/asfrm/bambuapi-go/states"
 )
@@ -106,52 +107,16 @@ func validateConfig(cfg Config) error {
 }
 
 // connectMQTT connects to the printer via MQTT only (no camera).
-// It waits for the MQTT client to connect and receive initial data.
+// The library's Connect() method handles full state request automatically.
 func connectMQTT(cfg Config) (*printer.Printer, error) {
 	p := printer.NewPrinter(cfg.IP, cfg.AccessCode, cfg.Serial)
 
-	// Disable aggressive mode BEFORE connecting to avoid blocking on info requests
-	p.SetMQTTAggressiveMode(false)
-
-	// Start only the MQTT client - do NOT start camera for commands
-	if err := p.MQTTStart(); err != nil {
-		return nil, fmt.Errorf("failed to start MQTT client: %w", err)
+	// Connect handles everything: MQTT connection, full state request, and waiting for data
+	if err := p.Connect(); err != nil {
+		return nil, fmt.Errorf("failed to connect: %w", err)
 	}
 
-	// Wait for MQTT connection (max 10 seconds)
-	timeout := time.After(10 * time.Second)
-	ticker := time.NewTicker(20 * time.Millisecond)
-
-	for {
-		select {
-		case <-timeout:
-			ticker.Stop()
-			p.MQTTStop()
-			return nil, fmt.Errorf("timeout waiting for MQTT connection")
-		case <-ticker.C:
-			if p.MQTTClientConnected() {
-				ticker.Stop()
-				// Connection established, wait for initial data
-				time.Sleep(300 * time.Millisecond)
-				// Request full state
-				p.RequestFullState()
-				// Wait for full state to arrive (check for key fields)
-				for i := 0; i < 25; i++ { // 2.5 seconds max
-					dump := p.MQTTDump()
-					if printData, ok := dump["print"].(map[string]interface{}); ok {
-						// Check for key fields that indicate full state
-						if _, hasBed := printData["bed_temper"]; hasBed {
-							if _, hasAms := printData["ams"]; hasAms {
-								return p, nil
-							}
-						}
-					}
-					time.Sleep(100 * time.Millisecond)
-				}
-				return p, nil
-			}
-		}
-	}
+	return p, nil
 }
 
 // printStatusJSON prints the printer status in JSON format.
@@ -604,7 +569,12 @@ func cmdAMS(p *printer.Printer, args []string) error {
 
 		for trayIdx, tray := range ams.FilamentTrays {
 			if tray.TrayInfoIdx != "" {
-				fmt.Printf("  Tray %d: %s (%s)\n", trayIdx, tray.TrayInfoIdx, tray.TrayColor)
+				// Try to get human-readable filament name
+				filamentName := tray.TrayInfoIdx
+				if fil, err := filament.FilamentByIndex(tray.TrayInfoIdx); err == nil {
+					filamentName = fil.Name()
+				}
+				fmt.Printf("  Tray %d: %s (%s)\n", trayIdx, filamentName, tray.TrayColor)
 			}
 		}
 		fmt.Println()

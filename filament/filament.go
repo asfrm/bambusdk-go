@@ -129,6 +129,124 @@ func FilamentByName(name string) (Filament, error) {
 	return 0, fmt.Errorf("filament %s not found", name)
 }
 
+// FilamentByIndex returns a Filament by its tray_info_idx code (e.g., "GFG99").
+func FilamentByIndex(idx string) (Filament, error) {
+	idxToFilament := map[string]Filament{
+		"GFL00": FilamentPolyLitePLA,
+		"GFL01": FilamentPolyTerraPLA,
+		"GFB00": FilamentBambuABS,
+		"GFN03": FilamentBambuPACF,
+		"GFC00": FilamentBambuPC,
+		"GFA00": FilamentBambuPLABasic,
+		"GFA01": FilamentBambuPLAMatte,
+		"GFS01": FilamentSupportG,
+		"GFS00": FilamentSupportW,
+		"GFU01": FilamentBambuTPU95A,
+		"GFB02": FilamentBambuASAAero,
+		"GFA02": FilamentBambuPLAMetal,
+		"GFG01": FilamentBambuPETGTranslucent,
+		"GFA07": FilamentBambuPLAMarble,
+		"GFA16": FilamentBambuPLAWood,
+		"GFA06": FilamentBambuPLASilkPlus,
+		"GFG02": FilamentBambuPETGHF,
+		"GFU02": FilamentBambuTPUForAMS,
+		"GFS06": FilamentBambuSupportForABS,
+		"GFC01": FilamentBambuPCFR,
+		"GFA15": FilamentBambuPLAGalaxy,
+		"GFN08": FilamentBambuPA6GF,
+		"GFA11": FilamentBambuPLAAero,
+		"GFB51": FilamentBambuASACF,
+		"GFG50": FilamentBambuPETGCF,
+		"GFS03": FilamentBambuSupportForPAPET,
+		"GFA08": FilamentBambuPLASparkle,
+		"GFB50": FilamentBambuABSGF,
+		"GFN04": FilamentBambuPAHTCF,
+		"GFN05": FilamentBambuPA6CF,
+		"GFA05": FilamentBambuPLASilk,
+		"GFS04": FilamentBambuPVA,
+		"GFA50": FilamentBambuPLACF,
+		"GFS05": FilamentBambuSupportForPLAPETG,
+		"GFU00": FilamentBambuTPU95AHF,
+		"GFN06": FilamentBambuPPACF,
+		"GFB01": FilamentBambuASA,
+		"GFA12": FilamentBambuPLAGlow,
+		"GFB99": FilamentABS,
+		"GFB98": FilamentGenericASA,
+		"GFN99": FilamentPA,
+		"GFN98": FilamentPACF,
+		"GFC99": FilamentPC,
+		"GFG99": FilamentPETG,
+		"GFL99": FilamentPLA,
+		"GFL98": FilamentPLACF,
+		"GFS99": FilamentGenericPVA,
+		"GFU99": FilamentTPU,
+	}
+
+	if f, ok := idxToFilament[idx]; ok {
+		return f, nil
+	}
+	return 0, fmt.Errorf("filament index %s not found", idx)
+}
+
+// Name returns the human-readable name of a Filament.
+func (f Filament) Name() string {
+	names := map[Filament]string{
+		FilamentPolyLitePLA:            "PolyLite PLA",
+		FilamentPolyTerraPLA:           "PolyTerra PLA",
+		FilamentBambuABS:               "Bambu ABS",
+		FilamentBambuPACF:              "Bambu PA-CF",
+		FilamentBambuPC:                "Bambu PC",
+		FilamentBambuPLABasic:          "Bambu PLA Basic",
+		FilamentBambuPLAMatte:          "Bambu PLA Matte",
+		FilamentSupportG:               "Support G",
+		FilamentSupportW:               "Support W",
+		FilamentBambuTPU95A:            "Bambu TPU 95A",
+		FilamentBambuASAAero:           "Bambu ASA Aero",
+		FilamentBambuPLAMetal:          "Bambu PLA Metal",
+		FilamentBambuPETGTranslucent:   "Bambu PETG Translucent",
+		FilamentBambuPLAMarble:         "Bambu PLA Marble",
+		FilamentBambuPLAWood:           "Bambu PLA Wood",
+		FilamentBambuPLASilkPlus:       "Bambu PLA Silk Plus",
+		FilamentBambuPETGHF:            "Bambu PETG HF",
+		FilamentBambuTPUForAMS:         "Bambu TPU for AMS",
+		FilamentBambuSupportForABS:     "Bambu Support for ABS",
+		FilamentBambuPCFR:              "Bambu PC-FR",
+		FilamentBambuPLAGalaxy:         "Bambu PLA Galaxy",
+		FilamentBambuPA6GF:             "Bambu PA6-GF",
+		FilamentBambuPLAAero:           "Bambu PLA Aero",
+		FilamentBambuASACF:             "Bambu ASA-CF",
+		FilamentBambuPETGCF:            "Bambu PETG-CF",
+		FilamentBambuSupportForPAPET:   "Bambu Support for PA/PET",
+		FilamentBambuPLASparkle:        "Bambu PLA Sparkle",
+		FilamentBambuABSGF:             "Bambu ABS-GF",
+		FilamentBambuPAHTCF:            "Bambu PAHT-CF",
+		FilamentBambuPA6CF:             "Bambu PA6-CF",
+		FilamentBambuPLASilk:           "Bambu PLA Silk",
+		FilamentBambuPVA:               "Bambu PVA",
+		FilamentBambuPLACF:             "Bambu PLA-CF",
+		FilamentBambuSupportForPLAPETG: "Bambu Support for PLA/PETG",
+		FilamentBambuTPU95AHF:          "Bambu TPU 95A HF",
+		FilamentBambuPPACF:             "Bambu PPA-CF",
+		FilamentBambuASA:               "Bambu ASA",
+		FilamentBambuPLAGlow:           "Bambu PLA Glow",
+		FilamentABS:                    "ABS",
+		FilamentGenericASA:             "ASA",
+		FilamentPA:                     "PA",
+		FilamentPACF:                   "PA-CF",
+		FilamentPC:                     "PC",
+		FilamentPETG:                   "PETG",
+		FilamentPLA:                    "PLA",
+		FilamentPLACF:                  "PLA-CF",
+		FilamentGenericPVA:             "PVA",
+		FilamentTPU:                    "TPU",
+	}
+
+	if name, ok := names[f]; ok {
+		return name
+	}
+	return "Unknown"
+}
+
 // GetSettings returns the AMSFilamentSettings for a Filament.
 func (f Filament) GetSettings() AMSFilamentSettings {
 	settings := map[Filament]AMSFilamentSettings{
