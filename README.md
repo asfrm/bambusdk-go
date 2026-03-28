@@ -2,8 +2,7 @@
 
 Native Go implementation of the Bambu Lab 3D Printer API.
 
-> **Note:** This is a native Go port of the Python [bambulabs_api](https://github.com/BambuTools/bambulabs_api) project.
-> All credit for the original API design and reverse-engineering goes to the [BambuTools team](https://github.com/BambuTools/bambulabs_api).
+> **Note:** This is a native Go implementation of the Bambu Lab printer API for controlling Bambu Lab 3D printers.
 
 ## Features
 
@@ -19,7 +18,7 @@ Native Go implementation of the Bambu Lab 3D Printer API.
 ## Installation
 
 ```bash
-go get github.com/bambuapi-go/bambuapi-go/bambulabs_api
+go get github.com/asfrm/bambuapi-go
 ```
 
 ## Quick Start
@@ -30,32 +29,32 @@ package main
 import (
     "fmt"
     "time"
-    
-    bl "github.com/bambuapi-go/bambuapi-go/bambulabs_api"
+
+    "github.com/asfrm/bambuapi-go/printer"
 )
 
 func main() {
     // Create printer instance
-    printer := bl.NewPrinter("192.168.1.200", "YOUR_ACCESS_CODE", "YOUR_SERIAL")
-    
+    p := printer.NewPrinter("192.168.1.200", "YOUR_ACCESS_CODE", "YOUR_SERIAL")
+
     // Connect to printer
-    err := printer.Connect()
+    err := p.Connect()
     if err != nil {
         panic(err)
     }
-    defer printer.Disconnect()
-    
+    defer p.Disconnect()
+
     // Wait for connection
     time.Sleep(2 * time.Second)
-    
+
     // Get printer status
-    fmt.Printf("State: %s\n", printer.GetState())
-    fmt.Printf("Bed Temp: %.1f°C\n", printer.GetBedTemperature())
-    fmt.Printf("Nozzle Temp: %.1f°C\n", printer.GetNozzleTemperature())
-    
+    fmt.Printf("State: %s\n", p.GetState())
+    fmt.Printf("Bed Temp: %.1f°C\n", p.GetBedTemperature())
+    fmt.Printf("Nozzle Temp: %.1f°C\n", p.GetNozzleTemperature())
+
     // Control printer
-    printer.TurnLightOn()
-    printer.HomePrinter()
+    p.TurnLightOn()
+    p.HomePrinter()
 }
 ```
 
@@ -64,18 +63,18 @@ func main() {
 ### Monitor Print Progress
 
 ```go
-printer := bl.NewPrinter(ip, accessCode, serial)
-printer.Connect()
-defer printer.Disconnect()
+p := printer.NewPrinter(ip, accessCode, serial)
+p.Connect()
+defer p.Disconnect()
 
 for {
-    percentage := printer.GetPercentage()
-    remaining := printer.GetTime()
-    state := printer.GetState()
-    
-    fmt.Printf("Progress: %v%%, Remaining: %v, State: %s\n", 
+    percentage := p.GetPercentage()
+    remaining := p.GetTime()
+    state := p.GetState()
+
+    fmt.Printf("Progress: %d%%, Remaining: %v, State: %s\n",
         percentage, remaining, state)
-    
+
     time.Sleep(5 * time.Second)
 }
 ```
@@ -84,44 +83,44 @@ for {
 
 ```go
 // Home printer
-printer.HomePrinter()
+p.HomePrinter()
 
 // Set bed temperature
-printer.SetBedTemperature(60)
+p.SetBedTemperature(60)
 
 // Set nozzle temperature
-printer.SetNozzleTemperature(200)
+p.SetNozzleTemperature(200)
 
 // Custom G-code
-printer.Gcode("G1 X100 Y100 F3000", true)
+p.Gcode("G1 X100 Y100 F3000", true)
 ```
 
 ### Control Fans
 
 ```go
 // Set part fan speed (0-255)
-printer.SetPartFanSpeedInt(128)
+p.SetPartFanSpeedInt(128)
 
 // Or use percentage (0.0-1.0)
-printer.SetPartFanSpeed(0.5)
+p.SetPartFanSpeed(0.5)
 
 // Control auxiliary and chamber fans
-printer.SetAuxFanSpeedInt(200)
-printer.SetChamberFanSpeedInt(100)
+p.SetAuxFanSpeedInt(200)
+p.SetChamberFanSpeedInt(100)
 ```
 
 ### AMS Management
 
 ```go
 // Get AMS hub info
-amsHub := printer.AMSHub()
+amsHub := p.AMSHub()
 
 // Access individual AMS units
 ams := amsHub.Get(0)
 if ams != nil {
     fmt.Printf("Humidity: %d%%\n", ams.Humidity)
     fmt.Printf("Temperature: %.1f°C\n", ams.Temperature)
-    
+
     // Get filament tray info
     tray := ams.GetFilamentTray(0)
     if tray != nil {
@@ -134,13 +133,13 @@ if ams != nil {
 
 ```go
 // Get camera frame as base64
-frame, err := printer.GetCameraFrame()
+frame, err := p.GetCameraFrame()
 if err != nil {
     log.Fatal(err)
 }
 
 // Get camera frame as image
-img, err := printer.GetCameraImage()
+img, err := p.GetCameraImage()
 if err != nil {
     log.Fatal(err)
 }
@@ -151,74 +150,74 @@ if err != nil {
 ```go
 // Upload file
 file, _ := os.Open("print.gcode")
-printer.UploadFile(file, "my_print.gcode")
+p.UploadFile(file, "my_print.gcode")
 
 // Start print
-printer.StartPrint("my_print.gcode", 1, true, []int{0}, nil, true)
+p.StartPrint("my_print.gcode", 1, true, []int{0}, nil, true)
 
 // Download file
-data, err := printer.DownloadFile("image/last_print.jpg")
+data, err := p.DownloadFile("image/last_print.jpg")
 
 // Delete file
-printer.DeleteFile("cache/temp.gcode")
+p.DeleteFile("cache/temp.gcode")
 ```
 
 ### Print Control
 
 ```go
 // Start print
-printer.StartPrint("file.gcode", 1, true, []int{0}, nil, true)
+p.StartPrint("file.gcode", 1, true, []int{0}, nil, true)
 
 // Pause print
-printer.PausePrint()
+p.PausePrint()
 
 // Resume print
-printer.ResumePrint()
+p.ResumePrint()
 
 // Stop print
-printer.StopPrint()
+p.StopPrint()
 
 // Skip objects during print
-printer.SkipObjects([]int{1, 3, 5})
+p.SkipObjects([]int{1, 3, 5})
 ```
 
 ### Temperature Control
 
 ```go
 // Set bed temperature
-printer.SetBedTemperature(60)
+p.SetBedTemperature(60)
 
-// Set nozzle temperature  
-printer.SetNozzleTemperature(210)
+// Set nozzle temperature
+p.SetNozzleTemperature(210)
 
 // Low temperature warning (use override if needed)
-printer.SetBedTemperatureOverride(30, true)
+p.SetBedTemperatureOverride(30, true)
 ```
 
 ### Calibration
 
 ```go
 // Full calibration
-printer.CalibratePrinter(true, true, true)
+p.CalibratePrinter(true, true, true)
 
 // Bed leveling only
-printer.CalibratePrinter(true, false, false)
+p.CalibratePrinter(true, false, false)
 ```
 
 ### Filament Management
 
 ```go
 // Load filament
-printer.LoadFilamentSpool()
+p.LoadFilamentSpool()
 
 // Unload filament
-printer.UnloadFilamentSpool()
+p.UnloadFilamentSpool()
 
 // Set filament settings
-printer.SetFilamentPrinter("FF0000", "BAMBU_PLA", 255, 254)
+p.SetFilamentPrinter("FF0000", "BAMBU_PLA", 255, 254)
 
 // Retry filament action
-printer.RetryFilamentAction()
+p.RetryFilamentAction()
 ```
 
 ## API Reference
@@ -302,18 +301,27 @@ Detailed status including:
 - Check available storage on printer
 - Ensure file name is valid
 
+## Project Structure
+
+```
+bambuapi-go/
+├── printer/          # Main printer client
+├── mqtt/             # MQTT communication
+├── camera/           # Camera stream
+├── ftp/              # FTP file transfer
+├── ams/              # AMS (Automated Material System)
+├── filament/         # Filament types and settings
+├── printerinfo/      # Printer information types
+├── states/           # Printer state types
+└── examples/         # Example applications
+```
+
 ## License
 
 MIT License - See LICENSE file for details
 
 ## Credits
 
-This Go implementation is based on the Python [bambulabs_api](https://github.com/BambuTools/bambulabs_api) project.
-
-**Original Python API Authors:**
-- Chris Ioannidis (@chris.ioannidis23)
-- Haotian Wu (@ohmdelta)
-
-**Original Project:** https://github.com/BambuTools/bambulabs_api
+This Go implementation is inspired by the Python [bambulabs_api](https://github.com/BambuTools/bambulabs_api) project.
 
 Special thanks to the BambuTools community for reverse-engineering the Bambu Lab printer protocol.

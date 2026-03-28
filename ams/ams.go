@@ -1,39 +1,38 @@
+// Package ams provides AMS (Automated Material System) support for Bambu Lab printers.
 package ams
 
-import (
-	"github.com/asfrm/bambuapi-go/bambulabs_api/filamentinfo"
-)
+import "github.com/asfrm/bambuapi-go/filament"
 
-// AMS represents the Bambu Lab AMS (Automated Material System)
+// AMS represents the Bambu Lab AMS (Automated Material System).
 type AMS struct {
-	FilamentTrays map[int]*filamentinfo.FilamentTray
+	FilamentTrays map[int]*filament.FilamentTray
 	Humidity      int
 	Temperature   float64
 }
 
-// NewAMS creates a new AMS instance
+// NewAMS creates a new AMS instance.
 func NewAMS(humidity int, temperature float64) *AMS {
 	return &AMS{
-		FilamentTrays: make(map[int]*filamentinfo.FilamentTray),
+		FilamentTrays: make(map[int]*filament.FilamentTray),
 		Humidity:      humidity,
 		Temperature:   temperature,
 	}
 }
 
-// SetFilamentTray sets a filament tray at the given index
-func (a *AMS) SetFilamentTray(trayIndex int, tray *filamentinfo.FilamentTray) {
+// SetFilamentTray sets a filament tray at the given index.
+func (a *AMS) SetFilamentTray(trayIndex int, tray *filament.FilamentTray) {
 	a.FilamentTrays[trayIndex] = tray
 }
 
-// GetFilamentTray gets the filament tray at the given index
-func (a *AMS) GetFilamentTray(trayIndex int) *filamentinfo.FilamentTray {
+// GetFilamentTray gets the filament tray at the given index.
+func (a *AMS) GetFilamentTray(trayIndex int) *filament.FilamentTray {
 	if tray, ok := a.FilamentTrays[trayIndex]; ok {
 		return tray
 	}
 	return nil
 }
 
-// ProcessTrays processes a list of tray data
+// ProcessTrays processes a list of tray data.
 func (a *AMS) ProcessTrays(trays []map[string]interface{}) {
 	for _, t := range trays {
 		var id int
@@ -46,25 +45,25 @@ func (a *AMS) ProcessTrays(trays []map[string]interface{}) {
 			}
 		}
 		if _, ok := t["n"]; ok {
-			tray := filamentinfo.FilamentTrayFromDict(t)
+			tray := filament.FilamentTrayFromDict(t)
 			a.SetFilamentTray(id, &tray)
 		}
 	}
 }
 
-// AMSHub holds all AMS units connected to the printer
+// AMSHub holds all AMS units connected to the printer.
 type AMSHub struct {
 	AMSHub map[int]*AMS
 }
 
-// NewAMSHub creates a new AMSHub instance
+// NewAMSHub creates a new AMSHub instance.
 func NewAMSHub() *AMSHub {
 	return &AMSHub{
 		AMSHub: make(map[int]*AMS),
 	}
 }
 
-// Get gets an AMS by index
+// Get gets an AMS by index.
 func (h *AMSHub) Get(index int) *AMS {
 	if ams, ok := h.AMSHub[index]; ok {
 		return ams
@@ -72,12 +71,12 @@ func (h *AMSHub) Get(index int) *AMS {
 	return nil
 }
 
-// Set sets an AMS at the given index
+// Set sets an AMS at the given index.
 func (h *AMSHub) Set(index int, ams *AMS) {
 	h.AMSHub[index] = ams
 }
 
-// ParseList parses a list of AMS data
+// ParseList parses a list of AMS data.
 func (h *AMSHub) ParseList(amsList []map[string]interface{}) {
 	for _, a := range amsList {
 		var id int

@@ -1,26 +1,26 @@
-package bambulabs_api
+package printer
 
 import (
 	"testing"
 
-	"github.com/asfrm/bambuapi-go/bambulabs_api/filamentinfo"
-	"github.com/asfrm/bambuapi-go/bambulabs_api/printerinfo"
-	"github.com/asfrm/bambuapi-go/bambulabs_api/states"
+	"github.com/asfrm/bambuapi-go/filament"
+	"github.com/asfrm/bambuapi-go/printerinfo"
+	"github.com/asfrm/bambuapi-go/states"
 )
 
 func TestNewPrinter(t *testing.T) {
-	printer := NewPrinter("192.168.1.100", "12345678", "TEST123")
+	p := NewPrinter("192.168.1.100", "12345678", "TEST123")
 
-	if printer.IPAddress != "192.168.1.100" {
-		t.Errorf("Expected IPAddress to be 192.168.1.100, got %s", printer.IPAddress)
+	if p.IPAddress != "192.168.1.100" {
+		t.Errorf("Expected IPAddress to be 192.168.1.100, got %s", p.IPAddress)
 	}
 
-	if printer.AccessCode != "12345678" {
-		t.Errorf("Expected AccessCode to be 12345678, got %s", printer.AccessCode)
+	if p.AccessCode != "12345678" {
+		t.Errorf("Expected AccessCode to be 12345678, got %s", p.AccessCode)
 	}
 
-	if printer.Serial != "TEST123" {
-		t.Errorf("Expected Serial to be TEST123, got %s", printer.Serial)
+	if p.Serial != "TEST123" {
+		t.Errorf("Expected Serial to be TEST123, got %s", p.Serial)
 	}
 }
 
@@ -111,7 +111,7 @@ func TestFilamentByName(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		_, err := filamentinfo.FilamentByName(tt.name)
+		_, err := filament.FilamentByName(tt.name)
 		if (err != nil) != tt.wantError {
 			t.Errorf("FilamentByName(%s) error = %v, wantError %v", tt.name, err, tt.wantError)
 		}
@@ -119,7 +119,7 @@ func TestFilamentByName(t *testing.T) {
 }
 
 func TestFilamentSettings(t *testing.T) {
-	filament := filamentinfo.FilamentBambuPLABasic
+	filament := filament.FilamentBambuPLABasic
 	settings := filament.GetSettings()
 
 	if settings.TrayInfoIdx != "GFA00" {
@@ -161,7 +161,7 @@ func TestFilamentTrayFromDict(t *testing.T) {
 		"tray_uuid":       "UUID123",
 	}
 
-	tray := filamentinfo.FilamentTrayFromDict(dict)
+	tray := filament.FilamentTrayFromDict(dict)
 
 	if tray.K != 0.5 {
 		t.Errorf("Expected K to be 0.5, got %f", tray.K)

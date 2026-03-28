@@ -1,6 +1,7 @@
+// Package printerinfo provides printer information and types.
 package printerinfo
 
-// NozzleType represents the type of nozzle
+// NozzleType represents the type of nozzle.
 type NozzleType string
 
 const (
@@ -12,7 +13,7 @@ func (n NozzleType) String() string {
 	return string(n)
 }
 
-// ParseNozzleType parses a string into a NozzleType
+// ParseNozzleType parses a string into a NozzleType.
 func ParseNozzleType(s string) NozzleType {
 	switch s {
 	case "stainless_steel":
@@ -24,23 +25,23 @@ func ParseNozzleType(s string) NozzleType {
 	}
 }
 
-// PrinterType represents the type of printer
+// PrinterType represents the type of printer.
 type PrinterType string
 
 const (
-	PrinterTypeP1S      PrinterType = "P1S"
-	PrinterTypeP1P      PrinterType = "P1P"
-	PrinterTypeA1       PrinterType = "A1"
-	PrinterTypeA1Mini   PrinterType = "A1_MINI"
-	PrinterTypeX1C      PrinterType = "X1C"
-	PrinterTypeX1E      PrinterType = "X1E"
+	PrinterTypeP1S    PrinterType = "P1S"
+	PrinterTypeP1P    PrinterType = "P1P"
+	PrinterTypeA1     PrinterType = "A1"
+	PrinterTypeA1Mini PrinterType = "A1_MINI"
+	PrinterTypeX1C    PrinterType = "X1C"
+	PrinterTypeX1E    PrinterType = "X1E"
 )
 
 func (p PrinterType) String() string {
 	return string(p)
 }
 
-// ParsePrinterType parses a string into a PrinterType
+// ParsePrinterType parses a string into a PrinterType.
 func ParsePrinterType(s string) PrinterType {
 	switch s {
 	case "P1S":
@@ -60,13 +61,13 @@ func ParsePrinterType(s string) PrinterType {
 	}
 }
 
-// PrinterFirmwareInfo holds printer firmware information
+// PrinterFirmwareInfo holds printer firmware information.
 type PrinterFirmwareInfo struct {
 	PrinterType     PrinterType
 	FirmwareVersion string
 }
 
-// NozzleDiameters contains valid nozzle diameters
+// NozzleDiameters contains valid nozzle diameters.
 var NozzleDiameters = map[float64]bool{
 	0.2: true,
 	0.4: true,
@@ -74,7 +75,7 @@ var NozzleDiameters = map[float64]bool{
 	0.8: true,
 }
 
-// IsValidNozzleDiameter checks if a nozzle diameter is valid
+// IsValidNozzleDiameter checks if a nozzle diameter is valid.
 func IsValidNozzleDiameter(d float64) bool {
 	return NozzleDiameters[d]
 }

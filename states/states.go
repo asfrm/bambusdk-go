@@ -1,49 +1,50 @@
+// Package states provides printer state types and constants.
 package states
 
 import "fmt"
 
-// PrintStatus represents the current state of the printer
+// PrintStatus represents the current state of the printer.
 type PrintStatus int
 
 const (
-	PrintStatusPrinting                    PrintStatus = 0
-	PrintStatusAutoBedLeveling             PrintStatus = 1
-	PrintStatusHeatbedPreheating           PrintStatus = 2
-	PrintStatusSweepingXYMechMode          PrintStatus = 3
-	PrintStatusChangingFilament            PrintStatus = 4
-	PrintStatusM400Pause                   PrintStatus = 5
-	PrintStatusPausedFilamentRunout        PrintStatus = 6
-	PrintStatusHeatingHotend               PrintStatus = 7
-	PrintStatusCalibratingExtrusion        PrintStatus = 8
-	PrintStatusScanningBedSurface          PrintStatus = 9
-	PrintStatusInspectingFirstLayer        PrintStatus = 10
-	PrintStatusIdentifyingBuildPlateType   PrintStatus = 11
-	PrintStatusCalibratingMicroLidar       PrintStatus = 12
-	PrintStatusHomingToolhead              PrintStatus = 13
-	PrintStatusCleaningNozzleTip           PrintStatus = 14
-	PrintStatusCheckingExtruderTemperature PrintStatus = 15
-	PrintStatusPausedUser                  PrintStatus = 16
-	PrintStatusPausedFrontCoverFalling     PrintStatus = 17
-	PrintStatusCalibratingLidar            PrintStatus = 18
-	PrintStatusCalibratingExtrusionFlow    PrintStatus = 19
-	PrintStatusPausedNozzleTemperatureMalfunction    PrintStatus = 20
-	PrintStatusPausedHeatBedTemperatureMalfunction   PrintStatus = 21
-	PrintStatusFilamentUnloading           PrintStatus = 22
-	PrintStatusPausedSkippedStep           PrintStatus = 23
-	PrintStatusFilamentLoading             PrintStatus = 24
-	PrintStatusCalibratingMotorNoise       PrintStatus = 25
-	PrintStatusPausedAMSLost               PrintStatus = 26
-	PrintStatusPausedLowFanSpeedHeatBreak  PrintStatus = 27
+	PrintStatusPrinting                             PrintStatus = 0
+	PrintStatusAutoBedLeveling                      PrintStatus = 1
+	PrintStatusHeatbedPreheating                    PrintStatus = 2
+	PrintStatusSweepingXYMechMode                   PrintStatus = 3
+	PrintStatusChangingFilament                     PrintStatus = 4
+	PrintStatusM400Pause                            PrintStatus = 5
+	PrintStatusPausedFilamentRunout                 PrintStatus = 6
+	PrintStatusHeatingHotend                        PrintStatus = 7
+	PrintStatusCalibratingExtrusion                 PrintStatus = 8
+	PrintStatusScanningBedSurface                   PrintStatus = 9
+	PrintStatusInspectingFirstLayer                 PrintStatus = 10
+	PrintStatusIdentifyingBuildPlateType            PrintStatus = 11
+	PrintStatusCalibratingMicroLidar                PrintStatus = 12
+	PrintStatusHomingToolhead                       PrintStatus = 13
+	PrintStatusCleaningNozzleTip                    PrintStatus = 14
+	PrintStatusCheckingExtruderTemperature          PrintStatus = 15
+	PrintStatusPausedUser                           PrintStatus = 16
+	PrintStatusPausedFrontCoverFalling              PrintStatus = 17
+	PrintStatusCalibratingLidar                     PrintStatus = 18
+	PrintStatusCalibratingExtrusionFlow             PrintStatus = 19
+	PrintStatusPausedNozzleTemperatureMalfunction   PrintStatus = 20
+	PrintStatusPausedHeatBedTemperatureMalfunction  PrintStatus = 21
+	PrintStatusFilamentUnloading                    PrintStatus = 22
+	PrintStatusPausedSkippedStep                    PrintStatus = 23
+	PrintStatusFilamentLoading                      PrintStatus = 24
+	PrintStatusCalibratingMotorNoise                PrintStatus = 25
+	PrintStatusPausedAMSLost                        PrintStatus = 26
+	PrintStatusPausedLowFanSpeedHeatBreak           PrintStatus = 27
 	PrintStatusPausedChamberTemperatureControlError PrintStatus = 28
-	PrintStatusCoolingChamber              PrintStatus = 29
-	PrintStatusPausedUserGcode             PrintStatus = 30
-	PrintStatusMotorNoiseShowoff           PrintStatus = 31
+	PrintStatusCoolingChamber                       PrintStatus = 29
+	PrintStatusPausedUserGcode                      PrintStatus = 30
+	PrintStatusMotorNoiseShowoff                    PrintStatus = 31
 	PrintStatusPausedNozzleFilamentCoveredDetected  PrintStatus = 32
-	PrintStatusPausedCutterError           PrintStatus = 33
-	PrintStatusPausedFirstLayerError       PrintStatus = 34
-	PrintStatusPausedNozzleClog            PrintStatus = 35
-	PrintStatusUnknown                     PrintStatus = -1
-	PrintStatusIdle                        PrintStatus = 255
+	PrintStatusPausedCutterError                    PrintStatus = 33
+	PrintStatusPausedFirstLayerError                PrintStatus = 34
+	PrintStatusPausedNozzleClog                     PrintStatus = 35
+	PrintStatusUnknown                              PrintStatus = -1
+	PrintStatusIdle                                 PrintStatus = 255
 )
 
 func (s PrintStatus) String() string {
@@ -127,24 +128,24 @@ func (s PrintStatus) String() string {
 	}
 }
 
-// GcodeState represents the G-code state of the printer
+// GcodeState represents the G-code state of the printer.
 type GcodeState string
 
 const (
-	GcodeStateIdle      GcodeState = "IDLE"
-	GcodeStatePrepare   GcodeState = "PREPARE"
-	GcodeStateRunning   GcodeState = "RUNNING"
-	GcodeStatePause     GcodeState = "PAUSE"
-	GcodeStateFinish    GcodeState = "FINISH"
-	GcodeStateFailed    GcodeState = "FAILED"
-	GcodeStateUnknown   GcodeState = "UNKNOWN"
+	GcodeStateIdle    GcodeState = "IDLE"
+	GcodeStatePrepare GcodeState = "PREPARE"
+	GcodeStateRunning GcodeState = "RUNNING"
+	GcodeStatePause   GcodeState = "PAUSE"
+	GcodeStateFinish  GcodeState = "FINISH"
+	GcodeStateFailed  GcodeState = "FAILED"
+	GcodeStateUnknown GcodeState = "UNKNOWN"
 )
 
 func (s GcodeState) String() string {
 	return string(s)
 }
 
-// ParseGcodeState parses a string into a GcodeState
+// ParseGcodeState parses a string into a GcodeState.
 func ParseGcodeState(s string) GcodeState {
 	switch s {
 	case "IDLE":
@@ -164,7 +165,7 @@ func ParseGcodeState(s string) GcodeState {
 	}
 }
 
-// ParsePrintStatus parses an interface{} into a PrintStatus
+// ParsePrintStatus parses an interface{} into a PrintStatus.
 func ParsePrintStatus(v interface{}) PrintStatus {
 	switch val := v.(type) {
 	case int:

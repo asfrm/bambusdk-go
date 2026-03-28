@@ -1,4 +1,5 @@
-package cameraclient
+// Package camera provides camera stream functionality for Bambu Lab printers.
+package camera
 
 import (
 	"crypto/tls"
@@ -6,14 +7,21 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log"
 	"net"
+	"os"
+	"strconv"
 	"sync"
 	"time"
-
-	"github.com/asfrm/bambuapi-go/bambulabs_api/logger"
 )
 
-// PrinterCamera handles camera stream from the printer
+var (
+	debugLog = log.New(os.Stdout, "[DEBUG] ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
+	errorLog = log.New(os.Stderr, "[ERROR] ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
+	infoLog  = log.New(os.Stdout, "[INFO] ", log.Ldate|log.Ltime|log.Lmicroseconds)
+)
+
+// PrinterCamera handles camera stream from the printer.
 type PrinterCamera struct {
 	username   string
 	accessCode string
@@ -27,7 +35,7 @@ type PrinterCamera struct {
 	stopChan  chan struct{}
 }
 
-// NewPrinterCamera creates a new camera client
+// NewPrinterCamera creates a new camera client.
 func NewPrinterCamera(hostname, accessCode string, port int, username string) *PrinterCamera {
 	if port == 0 {
 		port = 6000
@@ -46,7 +54,7 @@ func NewPrinterCamera(hostname, accessCode string, port int, username string) *P
 	}
 }
 
-// Start starts the camera client
+// Start starts the camera client.
 func (c *PrinterCamera) Start() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -59,11 +67,11 @@ func (c *PrinterCamera) Start() bool {
 	c.thread = make(chan struct{})
 	go c.retriever()
 
-	logger.Info.Println("Starting camera thread")
+	infoLog.Println("Starting camera thread")
 	return true
 }
 
-// Stop stops the camera client
+// Stop stops the camera client.
 func (c *PrinterCamera) Stop() {
 	c.mu.Lock()
 	if !c.alive {
@@ -80,17 +88,17 @@ func (c *PrinterCamera) Stop() {
 		c.thread = nil
 	}
 
-	logger.Info.Println("Camera client stopped")
+	infoLog.Println("Camera client stopped")
 }
 
-// IsAlive checks if the camera client is running
+// IsAlive checks if the camera client is running.
 func (c *PrinterCamera) IsAlive() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.alive
 }
 
-// GetFrame gets the last camera frame as base64 encoded string
+// GetFrame gets the last camera frame as base64 encoded string.
 func (c *PrinterCamera) GetFrame() (string, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -102,7 +110,7 @@ func (c *PrinterCamera) GetFrame() (string, error) {
 	return base64.StdEncoding.EncodeToString(c.lastFrame), nil
 }
 
-// GetFrameBytes gets the last camera frame as bytes
+// GetFrameBytes gets the last camera frame as bytes.
 func (c *PrinterCamera) GetFrameBytes() ([]byte, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -116,7 +124,7 @@ func (c *PrinterCamera) GetFrameBytes() ([]byte, error) {
 	return frameCopy, nil
 }
 
-// buildAuthData builds the authentication data for the camera connection
+// buildAuthData builds the authentication data for the camera connection.
 func (c *PrinterCamera) buildAuthData() []byte {
 	authData := make([]byte, 0, 80)
 
@@ -139,7 +147,7 @@ func (c *PrinterCamera) buildAuthData() []byte {
 	return authData
 }
 
-// retriever is the main camera retrieval loop
+// retriever is the main camera retrieval loop.
 func (c *PrinterCamera) retriever() {
 	defer close(c.thread)
 
@@ -149,7 +157,7 @@ func (c *PrinterCamera) retriever() {
 	jpegStart := []byte{0xFF, 0xD8, 0xFF, 0xE0}
 	jpegEnd := []byte{0xFF, 0xD9}
 
-	readChunkSize := 4096
+	const readChunkSize = 4096
 
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: true,
@@ -157,9 +165,10 @@ func (c *PrinterCamera) retriever() {
 	}
 
 	for c.alive {
-		conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", c.hostname, c.port))
+		// Fix: Use net.JoinHostPort for proper IPv6 support
+		conn, err := net.Dial("tcp", net.JoinHostPort(c.hostname, strconv.Itoa(c.port)))
 		if err != nil {
-			logger.Error.Printf("Error connecting to camera: %v", err)
+			errorLog.Printf("Error connecting to camera: %v", err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
@@ -167,17 +176,17 @@ func (c *PrinterCamera) retriever() {
 		tlsConn := tls.Client(conn, tlsConfig)
 		err = tlsConn.Handshake()
 		if err != nil {
-			logger.Error.Printf("TLS handshake error: %v", err)
+			errorLog.Printf("TLS handshake error: %v", err)
 			tlsConn.Close()
 			time.Sleep(5 * time.Second)
 			continue
 		}
 
-		logger.Info.Println("Attempting to connect...")
+		infoLog.Println("Attempting to connect...")
 
 		_, err = tlsConn.Write(authData)
 		if err != nil {
-			logger.Error.Printf("Error writing auth data: %v", err)
+			errorLog.Printf("Error writing auth data: %v", err)
 			tlsConn.Close()
 			time.Sleep(5 * time.Second)
 			continue
@@ -207,18 +216,18 @@ func (c *PrinterCamera) retriever() {
 					continue
 				}
 				if err == io.EOF {
-					logger.Error.Println("Connection closed by server")
+					errorLog.Println("Connection closed by server")
 					break
 				}
-				logger.Error.Printf("Read error: %v", err)
+				errorLog.Printf("Read error: %v", err)
 				time.Sleep(1 * time.Second)
 				break
 			}
 
-			logger.Debug.Printf("Read chunk: %d bytes", n)
+			debugLog.Printf("Read chunk: %d bytes", n)
 
 			if img != nil && n > 0 {
-				logger.Debug.Println("Appending to image")
+				debugLog.Println("Appending to image")
 				img = append(img, buf[:n]...)
 
 				if len(img) > payloadSize {
@@ -238,17 +247,17 @@ func (c *PrinterCamera) retriever() {
 					}
 				}
 			} else if n == 16 {
-				logger.Debug.Println("Got header")
+				debugLog.Println("Got header")
 				connectAttempts = 0
 				img = make([]byte, 0)
 				// Payload size is in bytes 0-3 (little-endian, 3 bytes)
 				payloadSize = int(binary.LittleEndian.Uint32(append(buf[:3], 0)))
 			} else if n == 0 {
 				time.Sleep(5 * time.Second)
-				logger.Error.Println("Wrong access code or IP")
+				errorLog.Println("Wrong access code or IP")
 				break
 			} else {
-				logger.Error.Println("Something bad happened")
+				errorLog.Println("Something bad happened")
 				time.Sleep(1 * time.Second)
 				break
 			}
@@ -257,7 +266,7 @@ func (c *PrinterCamera) retriever() {
 		tlsConn.Close()
 
 		if connectAttempts > 10 {
-			logger.Error.Println("Too many connection attempts, reconnecting...")
+			errorLog.Println("Too many connection attempts, reconnecting...")
 			time.Sleep(5 * time.Second)
 		}
 	}

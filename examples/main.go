@@ -1,3 +1,4 @@
+// Example application demonstrating the use of the bambuapi-go library.
 package main
 
 import (
@@ -5,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	bl "github.com/asfrm/bambuapi-go/bambulabs_api"
+	"github.com/asfrm/bambuapi-go/printer"
 )
 
 func main() {
@@ -25,87 +26,87 @@ func main() {
 		accessCode = "12347890"
 	}
 
-	fmt.Println("Starting bambulabs_api Go example")
+	fmt.Println("Starting bambuapi-go example")
 	fmt.Println("Connecting to BambuLab 3D printer")
 	fmt.Printf("IP: %s\n", ipAddress)
 	fmt.Printf("Serial: %s\n", serial)
 	fmt.Printf("Access Code: %s\n", accessCode)
 
 	// Create a new printer instance
-	printer := bl.NewPrinter(ipAddress, accessCode, serial)
+	p := printer.NewPrinter(ipAddress, accessCode, serial)
 
 	// Connect to the printer
-	err := printer.Connect()
+	err := p.Connect()
 	if err != nil {
 		fmt.Printf("Failed to connect: %v\n", err)
 		return
 	}
-	defer printer.Disconnect()
+	defer p.Disconnect()
 
 	// Wait for connection to establish
 	time.Sleep(2 * time.Second)
 
 	// Check connection status
-	fmt.Printf("MQTT Connected: %v\n", printer.MQTTClientConnected())
-	fmt.Printf("Camera Alive: %v\n", printer.CameraClientAlive())
+	fmt.Printf("MQTT Connected: %v\n", p.MQTTClientConnected())
+	fmt.Printf("Camera Alive: %v\n", p.CameraClientAlive())
 
 	// Get printer status
-	state := printer.GetState()
+	state := p.GetState()
 	fmt.Printf("Printer State: %s\n", state)
 
 	// Get print percentage
-	percentage := printer.GetPercentage()
+	percentage := p.GetPercentage()
 	fmt.Printf("Print Percentage: %v\n", percentage)
 
 	// Get remaining time
-	remainingTime := printer.GetTime()
+	remainingTime := p.GetTime()
 	fmt.Printf("Remaining Time: %v\n", remainingTime)
 
 	// Get temperatures
-	bedTemp := printer.GetBedTemperature()
-	nozzleTemp := printer.GetNozzleTemperature()
-	chamberTemp := printer.GetChamberTemperature()
+	bedTemp := p.GetBedTemperature()
+	nozzleTemp := p.GetNozzleTemperature()
+	chamberTemp := p.GetChamberTemperature()
 	fmt.Printf("Bed Temperature: %.1f°C\n", bedTemp)
 	fmt.Printf("Nozzle Temperature: %.1f°C\n", nozzleTemp)
 	fmt.Printf("Chamber Temperature: %.1f°C\n", chamberTemp)
 
 	// Get print speed
-	printSpeed := printer.GetPrintSpeed()
+	printSpeed := p.GetPrintSpeed()
 	fmt.Printf("Print Speed: %d%%\n", printSpeed)
 
 	// Get file name
-	fileName := printer.GetFileName()
+	fileName := p.GetFileName()
 	fmt.Printf("Current File: %s\n", fileName)
 
 	// Get light state
-	lightState := printer.GetLightState()
+	lightState := p.GetLightState()
 	fmt.Printf("Light State: %s\n", lightState)
 
 	// Turn light off
 	fmt.Println("Turning light off...")
-	printer.TurnLightOff()
+	p.TurnLightOff()
 	time.Sleep(2 * time.Second)
 
 	// Turn light on
 	fmt.Println("Turning light on...")
-	printer.TurnLightOn()
+	p.TurnLightOn()
 
 	// Get nozzle info
-	nozzleType := printer.NozzleType()
-	nozzleDiameter := printer.NozzleDiameter()
+	nozzleType := p.NozzleType()
+	nozzleDiameter := p.NozzleDiameter()
 	fmt.Printf("Nozzle Type: %s, Diameter: %.1fmm\n", nozzleType, nozzleDiameter)
 
 	// Get current layer info
-	currentLayer := printer.CurrentLayerNum()
-	totalLayers := printer.TotalLayerNum()
+	currentLayer := p.CurrentLayerNum()
+	totalLayers := p.TotalLayerNum()
 	fmt.Printf("Layer: %d/%d\n", currentLayer, totalLayers)
 
 	// Get current state (detailed)
-	currentState := printer.GetCurrentState()
+	currentState := p.GetCurrentState()
 	fmt.Printf("Current State: %s\n", currentState)
 
 	// Get AMS info (if available)
-	amsHub := printer.AMSHub()
+	amsHub := p.AMSHub()
 	if amsHub != nil {
 		fmt.Println("AMS Hub available")
 		for i := 0; i < 4; i++ {
@@ -117,33 +118,33 @@ func main() {
 	}
 
 	// Get external spool info
-	vtTray := printer.VTTray()
+	vtTray := p.VTTray()
 	if vtTray.TrayInfoIdx != "" {
 		fmt.Printf("External Spool: %s (%s)\n", vtTray.TrayIDName, vtTray.TrayType)
 	}
 
 	// Get WiFi signal
-	wifiSignal := printer.WifiSignal()
+	wifiSignal := p.WifiSignal()
 	fmt.Printf("WiFi Signal: %s dBm\n", wifiSignal)
 
 	// Get print type
-	printType := printer.PrintType()
+	printType := p.PrintType()
 	fmt.Printf("Print Type: %s\n", printType)
 
 	// Get subtask name
-	subtaskName := printer.SubtaskName()
+	subtaskName := p.SubtaskName()
 	fmt.Printf("Subtask: %s\n", subtaskName)
 
 	// Example: Send G-code (home printer)
 	// fmt.Println("Homing printer...")
-	// printer.HomePrinter()
+	// p.HomePrinter()
 
 	// Example: Set fan speed
-	// printer.SetPartFanSpeedInt(128) // 50% speed
+	// p.SetPartFanSpeedInt(128) // 50% speed
 
 	// Example: Get camera frame
-	if printer.CameraClientAlive() {
-		frame, err := printer.GetCameraFrame()
+	if p.CameraClientAlive() {
+		frame, err := p.GetCameraFrame()
 		if err != nil {
 			fmt.Printf("Camera frame error: %v\n", err)
 		} else {
