@@ -1,0 +1,1225 @@
+package mqttclient
+
+import (
+	"crypto/tls"
+	"encoding/json"
+	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	mqtt "github.com/eclipse/paho.mqtt.golang"
+
+	"github.com/bambulabs_api/go/bambulabs_api/ams"
+	"github.com/bambulabs_api/go/bambulabs_api/filamentinfo"
+	"github.com/bambulabs_api/go/bambulabs_api/logger"
+	"github.com/bambulabs_api/go/bambulabs_api/printerinfo"
+	"github.com/bambulabs_api/go/bambulabs_api/states"
+)
+
+// PrinterMQTTClient handles MQTT communication with the printer
+type PrinterMQTTClient struct {
+	hostname         string
+	access           string
+	username         string
+	printerSerial    string
+	port             int
+	timeout          int
+
+	client           mqtt.Client
+	commandTopic     string
+
+	mu               sync.RWMutex
+	data             map[string]interface{}
+	lastUpdate       int64
+	pushallTimeout   int
+	pushallAggressive bool
+
+	amsHub           *ams.AMSHub
+	strict           bool
+	printerInfo      printerinfo.PrinterFirmwareInfo
+
+	connected        bool
+	ready            bool
+}
+
+// NewPrinterMQTTClient creates a new MQTT client
+func NewPrinterMQTTClient(hostname, access, printerSerial string, username string, port, timeout, pushallTimeout int, pushallOnConnect, strict bool) *PrinterMQTTClient {
+	if username == "" {
+		username = "bblp"
+	}
+	if port == 0 {
+		port = 8883
+	}
+	if timeout == 0 {
+		timeout = 60
+	}
+	if pushallTimeout == 0 {
+		pushallTimeout = 60
+	}
+
+	c := &PrinterMQTTClient{
+		hostname:          hostname,
+		access:            access,
+		username:          username,
+		printerSerial:     printerSerial,
+		port:              port,
+		timeout:           timeout,
+		commandTopic:      fmt.Sprintf("device/%s/request", printerSerial),
+		data:              make(map[string]interface{}),
+		lastUpdate:        0,
+		pushallTimeout:    pushallTimeout,
+		pushallAggressive: pushallOnConnect,
+		amsHub:            ams.NewAMSHub(),
+		strict:            strict,
+		printerInfo: printerinfo.PrinterFirmwareInfo{
+			PrinterType:     printerinfo.PrinterTypeP1S,
+			FirmwareVersion: "01.04.00.00",
+		},
+	}
+
+	opts := mqtt.NewClientOptions()
+	opts.AddBroker(fmt.Sprintf("tls://%s:%d", hostname, port))
+	opts.SetUsername(username)
+	opts.SetPassword(access)
+	opts.SetClientID(printerSerial)
+	opts.SetAutoReconnect(true)
+	opts.SetConnectRetry(true)
+	opts.SetConnectRetryInterval(5 * time.Second)
+	opts.SetConnectionLostHandler(c.onConnectionLost)
+	opts.SetOnConnectHandler(c.onConnect)
+	opts.SetDefaultPublishHandler(c.onMessage)
+
+	// TLS configuration
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: true,
+		MinVersion:         tls.VersionTLS12,
+	}
+	opts.SetTLSConfig(tlsConfig)
+
+	c.client = mqtt.NewClient(opts)
+
+	return c
+}
+
+// IsConnected checks if the MQTT client is connected
+func (c *PrinterMQTTClient) IsConnected() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.client.IsConnected()
+}
+
+// Ready checks if the client has received data
+func (c *PrinterMQTTClient) Ready() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.ready && len(c.data) > 0
+}
+
+// Connect connects to the MQTT server
+func (c *PrinterMQTTClient) Connect() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	token := c.client.Connect()
+	if token.Wait() && token.Error() != nil {
+		logger.Error.Printf("Connection failed: %v", token.Error())
+		return token.Error()
+	}
+
+	logger.Info.Println("Connected successfully")
+	return nil
+}
+
+// Start starts the MQTT client loop
+func (c *PrinterMQTTClient) Start() error {
+	if !c.client.IsConnected() {
+		if err := c.Connect(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Stop stops the MQTT client
+func (c *PrinterMQTTClient) Stop() {
+	c.client.Disconnect(1000)
+	c.mu.Lock()
+	c.connected = false
+	c.mu.Unlock()
+	logger.Info.Println("MQTT client stopped")
+}
+
+// onConnect is called when connected to MQTT
+func (c *PrinterMQTTClient) onConnect(client mqtt.Client) {
+	c.mu.Lock()
+	c.connected = true
+	c.mu.Unlock()
+
+	logger.Info.Println("Connected to MQTT server")
+
+	// Subscribe to report topic
+	reportTopic := fmt.Sprintf("device/%s/report", c.printerSerial)
+	token := client.Subscribe(reportTopic, 1, nil)
+	token.Wait()
+
+	if c.pushallAggressive {
+		c.pushall()
+		c.infoGetVersion()
+		c.requestFirmwareHistory()
+	}
+
+	logger.Info.Println("Connection handshake completed")
+}
+
+// onConnectionLost is called when connection is lost
+func (c *PrinterMQTTClient) onConnectionLost(client mqtt.Client, err error) {
+	c.mu.Lock()
+	c.connected = false
+	c.mu.Unlock()
+	logger.Error.Printf("Connection lost: %v", err)
+}
+
+// onMessage handles incoming MQTT messages
+func (c *PrinterMQTTClient) onMessage(client mqtt.Client, msg mqtt.Message) {
+	var doc map[string]interface{}
+	if err := json.Unmarshal(msg.Payload(), &doc); err != nil {
+		logger.Error.Printf("Failed to parse message: %v", err)
+		return
+	}
+
+	c.manualUpdate(doc)
+}
+
+// manualUpdate updates internal data from received message
+func (c *PrinterMQTTClient) manualUpdate(doc map[string]interface{}) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for k, v := range doc {
+		if existing, ok := c.data[k]; ok {
+			if existingMap, ok := existing.(map[string]interface{}); ok {
+				if newMap, ok := v.(map[string]interface{}); ok {
+					for nk, nv := range newMap {
+						existingMap[nk] = nv
+					}
+					continue
+				}
+			}
+		}
+		c.data[k] = v
+	}
+
+	logger.Debug.Printf("Updated data: %+v", c.data)
+
+	// Update firmware version if available
+	if firmwareVersion := c.getFirmwareVersion(); firmwareVersion != "" {
+		c.printerInfo.FirmwareVersion = firmwareVersion
+	}
+
+	c.ready = true
+}
+
+// getPrintValue gets a value from the "print" section
+func (c *PrinterMQTTClient) getPrintValue(key string, defaultValue interface{}) interface{} {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if printData, ok := c.data["print"].(map[string]interface{}); ok {
+		if val, ok := printData[key]; ok {
+			return val
+		}
+	}
+	return defaultValue
+}
+
+// getInfoValue gets a value from the "info" section
+func (c *PrinterMQTTClient) getInfoValue(key string, defaultValue interface{}) interface{} {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if infoData, ok := c.data["info"].(map[string]interface{}); ok {
+		if val, ok := infoData[key]; ok {
+			return val
+		}
+	}
+	return defaultValue
+}
+
+// publishCommand publishes a command to the MQTT server
+func (c *PrinterMQTTClient) publishCommand(payload map[string]interface{}) bool {
+	if !c.client.IsConnected() {
+		logger.Error.Println("Not connected to MQTT server")
+		return false
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		logger.Error.Printf("Failed to marshal payload: %v", err)
+		return false
+	}
+
+	token := c.client.Publish(c.commandTopic, 1, false, jsonData)
+	token.Wait()
+
+	logger.Debug.Printf("Published command: %s", string(jsonData))
+	return token.Error() == nil
+}
+
+// pushall forces a full state update from the printer
+func (c *PrinterMQTTClient) pushall() bool {
+	return c.publishCommand(map[string]interface{}{
+		"pushing": map[string]interface{}{
+			"command": "pushall",
+		},
+	})
+}
+
+// infoGetVersion requests hardware and firmware info
+func (c *PrinterMQTTClient) infoGetVersion() bool {
+	return c.publishCommand(map[string]interface{}{
+		"info": map[string]interface{}{
+			"command": "get_version",
+		},
+	})
+}
+
+// requestFirmwareHistory requests firmware history
+func (c *PrinterMQTTClient) requestFirmwareHistory() bool {
+	return c.publishCommand(map[string]interface{}{
+		"upgrade": map[string]interface{}{
+			"command": "get_history",
+		},
+	})
+}
+
+// getFirmwareVersion gets the current firmware version
+func (c *PrinterMQTTClient) getFirmwareVersion() string {
+	modules, ok := c.getInfoValue("module", []interface{}{}).([]interface{})
+	if !ok {
+		return ""
+	}
+
+	for _, m := range modules {
+		if module, ok := m.(map[string]interface{}); ok {
+			if name, ok := module["name"].(string); ok && name == "ota" {
+				if swVer, ok := module["sw_ver"].(string); ok {
+					return swVer
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// GetLastPrintPercentage gets the print completion percentage
+func (c *PrinterMQTTClient) GetLastPrintPercentage() interface{} {
+	return c.getPrintValue("mc_percent", nil)
+}
+
+// GetRemainingTime gets the remaining print time in seconds
+func (c *PrinterMQTTClient) GetRemainingTime() interface{} {
+	return c.getPrintValue("mc_remaining_time", nil)
+}
+
+// GetPrinterState gets the printer G-code state
+func (c *PrinterMQTTClient) GetPrinterState() states.GcodeState {
+	state, ok := c.getPrintValue("gcode_state", "").(string)
+	if !ok {
+		return states.GcodeStateUnknown
+	}
+	return states.ParseGcodeState(state)
+}
+
+// GetCurrentState gets the current printer status
+func (c *PrinterMQTTClient) GetCurrentState() states.PrintStatus {
+	status := c.getPrintValue("stg_cur", -1)
+	return states.ParsePrintStatus(status)
+}
+
+// GetPrintSpeed gets the print speed
+func (c *PrinterMQTTClient) GetPrintSpeed() int {
+	speed := c.getPrintValue("spd_mag", 100)
+	switch v := speed.(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	}
+	return 100
+}
+
+// GetFileName gets the current/last print file name
+func (c *PrinterMQTTClient) GetFileName() string {
+	name, ok := c.getPrintValue("gcode_file", "").(string)
+	if !ok {
+		return ""
+	}
+	return name
+}
+
+// GetLightState gets the printer light state
+func (c *PrinterMQTTClient) GetLightState() string {
+	lightsReport, ok := c.getPrintValue("lights_report", []interface{}{}).([]interface{})
+	if !ok || len(lightsReport) == 0 {
+		return "unknown"
+	}
+
+	if light, ok := lightsReport[0].(map[string]interface{}); ok {
+		if mode, ok := light["mode"].(string); ok {
+			return mode
+		}
+	}
+	return "unknown"
+}
+
+// TurnLightOn turns on the printer light
+func (c *PrinterMQTTClient) TurnLightOn() bool {
+	return c.publishCommand(map[string]interface{}{
+		"system": map[string]interface{}{
+			"led_mode": "on",
+		},
+	})
+}
+
+// TurnLightOff turns off the printer light
+func (c *PrinterMQTTClient) TurnLightOff() bool {
+	return c.publishCommand(map[string]interface{}{
+		"system": map[string]interface{}{
+			"led_mode": "off",
+		},
+	})
+}
+
+// GetBedTemperature gets the bed temperature
+func (c *PrinterMQTTClient) GetBedTemperature() float64 {
+	temp := c.getPrintValue("bed_temper", 0.0)
+	switch v := temp.(type) {
+	case float64:
+		return v
+	case int:
+		return float64(v)
+	}
+	return 0.0
+}
+
+// GetNozzleTemperature gets the nozzle temperature
+func (c *PrinterMQTTClient) GetNozzleTemperature() float64 {
+	temp := c.getPrintValue("nozzle_temper", 0.0)
+	switch v := temp.(type) {
+	case float64:
+		return v
+	case int:
+		return float64(v)
+	}
+	return 0.0
+}
+
+// GetChamberTemperature gets the chamber temperature
+func (c *PrinterMQTTClient) GetChamberTemperature() float64 {
+	temp := c.getPrintValue("chamber_temper", nil)
+	if temp != nil {
+		switch v := temp.(type) {
+		case float64:
+			return v
+		case int:
+			return float64(v)
+		}
+	}
+
+	// Fallback to device.ctc.info.temp
+	if device, ok := c.getPrintValue("device", nil).(map[string]interface{}); ok {
+		if ctc, ok := device["ctc"].(map[string]interface{}); ok {
+			if info, ok := ctc["info"].(map[string]interface{}); ok {
+				if t, ok := info["temp"].(float64); ok {
+					return t
+				}
+			}
+		}
+	}
+	return 0.0
+}
+
+// CurrentLayerNum gets the current layer number
+func (c *PrinterMQTTClient) CurrentLayerNum() int {
+	num := c.getPrintValue("layer_num", 0)
+	switch v := num.(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	}
+	return 0
+}
+
+// TotalLayerNum gets the total layer number
+func (c *PrinterMQTTClient) TotalLayerNum() int {
+	num := c.getPrintValue("total_layer_num", 0)
+	switch v := num.(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	}
+	return 0
+}
+
+// NozzleDiameter gets the nozzle diameter
+func (c *PrinterMQTTClient) NozzleDiameter() float64 {
+	diameter := c.getPrintValue("nozzle_diameter", 0.4)
+	switch v := diameter.(type) {
+	case float64:
+		return v
+	case int:
+		return float64(v)
+	}
+	return 0.4
+}
+
+// NozzleType gets the nozzle type
+func (c *PrinterMQTTClient) NozzleType() printerinfo.NozzleType {
+	nozzleType, ok := c.getPrintValue("nozzle_type", "stainless_steel").(string)
+	if !ok {
+		return printerinfo.NozzleTypeStainlessSteel
+	}
+	return printerinfo.ParseNozzleType(nozzleType)
+}
+
+// GetFanGear gets the consolidated fan value
+func (c *PrinterMQTTClient) GetFanGear() int {
+	gear := c.getPrintValue("fan_gear", 0)
+	switch v := gear.(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	}
+	return 0
+}
+
+// GetPartFanSpeed gets the part fan speed
+func (c *PrinterMQTTClient) GetPartFanSpeed() int {
+	return c.GetFanGear() % 256
+}
+
+// GetAuxFanSpeed gets the auxiliary fan speed
+func (c *PrinterMQTTClient) GetAuxFanSpeed() int {
+	return (c.GetFanGear() >> 8) % 256
+}
+
+// GetChamberFanSpeed gets the chamber fan speed
+func (c *PrinterMQTTClient) GetChamberFanSpeed() int {
+	return c.GetFanGear() >> 16
+}
+
+// Dump returns the current data dump
+func (c *PrinterMQTTClient) Dump() map[string]interface{} {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	result := make(map[string]interface{})
+	for k, v := range c.data {
+		result[k] = v
+	}
+	return result
+}
+
+// setTemperatureSupport checks if the printer supports direct temperature commands
+func (c *PrinterMQTTClient) setTemperatureSupport() bool {
+	printerType := c.printerInfo.PrinterType
+	firmwareVersion := c.printerInfo.FirmwareVersion
+
+	if printerType == printerinfo.PrinterTypeP1P || printerType == printerinfo.PrinterTypeP1S ||
+		printerType == printerinfo.PrinterTypeX1E || printerType == printerinfo.PrinterTypeX1C {
+		return compareVersions(firmwareVersion, "01.06") < 0
+	} else if printerType == printerinfo.PrinterTypeA1 || printerType == printerinfo.PrinterTypeA1Mini {
+		return compareVersions(firmwareVersion, "01.04") <= 0
+	}
+	return false
+}
+
+// compareVersions compares two version strings
+func compareVersions(v1, v2 string) int {
+	parts1 := strings.Split(strings.ReplaceAll(v1, " ", ""), ".")
+	parts2 := strings.Split(strings.ReplaceAll(v2, " ", ""), ".")
+
+	for i := 0; i < len(parts1) && i < len(parts2); i++ {
+		n1, _ := strconv.Atoi(parts1[i])
+		n2, _ := strconv.Atoi(parts2[i])
+		if n1 > n2 {
+			return 1
+		} else if n1 < n2 {
+			return -1
+		}
+	}
+
+	if len(parts1) > len(parts2) {
+		return 1
+	} else if len(parts1) < len(parts2) {
+		return -1
+	}
+	return 0
+}
+
+// isValidGcode checks if a line is a valid G-code command
+func isValidGcode(line string) bool {
+	// Remove comments
+	parts := strings.Split(line, ";")
+	line = strings.TrimSpace(parts[0])
+
+	if line == "" {
+		return false
+	}
+
+	// Check if starts with G or M
+	if !strings.HasPrefix(line, "G") && !strings.HasPrefix(line, "M") {
+		return false
+	}
+
+	// Check for proper parameter formatting
+	tokens := strings.Fields(line)
+	paramRegex := regexp.MustCompile(`^[A-Z]-?\d+(\.\d+)?$`)
+
+	for i, token := range tokens {
+		if i == 0 {
+			if !regexp.MustCompile(`^[GM]\d+$`).MatchString(token) {
+				return false
+			}
+		} else {
+			if !paramRegex.MatchString(token) {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+// sendGcodeLine sends a single G-code line
+func (c *PrinterMQTTClient) sendGcodeLine(gcodeCommand string) bool {
+	return c.publishCommand(map[string]interface{}{
+		"print": map[string]interface{}{
+			"sequence_id": "0",
+			"command":     "gcode_line",
+			"param":       gcodeCommand,
+		},
+	})
+}
+
+// SendGcode sends G-code command(s) to the printer
+func (c *PrinterMQTTClient) SendGcode(gcodeCommand interface{}, gcodeCheck bool) (bool, error) {
+	switch cmd := gcodeCommand.(type) {
+	case string:
+		if gcodeCheck && !isValidGcode(cmd) {
+			return false, fmt.Errorf("invalid G-code command: %s", cmd)
+		}
+		return c.sendGcodeLine(cmd), nil
+	case []string:
+		if gcodeCheck {
+			for _, g := range cmd {
+				if !isValidGcode(g) {
+					return false, fmt.Errorf("invalid G-code command: %s", g)
+				}
+			}
+		}
+		return c.sendGcodeLine(strings.Join(cmd, "\n")), nil
+	default:
+		return false, fmt.Errorf("invalid gcode command type")
+	}
+}
+
+// SetBedTemperature sets the bed temperature
+func (c *PrinterMQTTClient) SetBedTemperature(temperature int, override bool) bool {
+	if c.setTemperatureSupport() {
+		return c.sendGcodeLine(fmt.Sprintf("M140 S%d", temperature))
+	}
+
+	if temperature < 40 && !override {
+		logger.Warn.Printf("Attempting to set low bed temperature (%d). Use override=true to force.", temperature)
+		return false
+	}
+	return c.sendGcodeLine(fmt.Sprintf("M190 S%d", temperature))
+}
+
+// SetNozzleTemperature sets the nozzle temperature
+func (c *PrinterMQTTClient) SetNozzleTemperature(temperature int, override bool) bool {
+	if c.setTemperatureSupport() {
+		return c.sendGcodeLine(fmt.Sprintf("M104 S%d", temperature))
+	}
+
+	if temperature < 60 && !override {
+		logger.Warn.Printf("Attempting to set low nozzle temperature (%d). Use override=true to force.", temperature)
+		return false
+	}
+	return c.sendGcodeLine(fmt.Sprintf("M109 S%d", temperature))
+}
+
+// SetPrintSpeedLevel sets the print speed level (0-3)
+func (c *PrinterMQTTClient) SetPrintSpeedLevel(speedLevel int) bool {
+	if speedLevel < 0 || speedLevel > 3 {
+		logger.Error.Printf("Invalid speed level: %d (must be 0-3)", speedLevel)
+		return false
+	}
+
+	return c.publishCommand(map[string]interface{}{
+		"print": map[string]interface{}{
+			"command": "print_speed",
+			"param":   fmt.Sprintf("%d", speedLevel),
+		},
+	})
+}
+
+// SetPartFanSpeed sets the part fan speed (0-255 or 0.0-1.0)
+func (c *PrinterMQTTClient) SetPartFanSpeed(speed interface{}) (bool, error) {
+	return c.setFanSpeed(speed, 1)
+}
+
+// SetAuxFanSpeed sets the auxiliary fan speed (0-255 or 0.0-1.0)
+func (c *PrinterMQTTClient) SetAuxFanSpeed(speed interface{}) (bool, error) {
+	return c.setFanSpeed(speed, 2)
+}
+
+// SetChamberFanSpeed sets the chamber fan speed (0-255 or 0.0-1.0)
+func (c *PrinterMQTTClient) SetChamberFanSpeed(speed interface{}) (bool, error) {
+	return c.setFanSpeed(speed, 3)
+}
+
+// setFanSpeed sets a fan speed
+func (c *PrinterMQTTClient) setFanSpeed(speed interface{}, fanNum int) (bool, error) {
+	var speedInt int
+
+	switch s := speed.(type) {
+	case int:
+		if s < 0 || s > 255 {
+			return false, fmt.Errorf("fan speed %d is not between 0 and 255", s)
+		}
+		speedInt = s
+	case float64:
+		if s < 0 || s > 1 {
+			return false, fmt.Errorf("fan speed %f is not between 0 and 1", s)
+		}
+		speedInt = int(255 * s)
+	default:
+		return false, fmt.Errorf("fan speed must be int or float")
+	}
+
+	return c.sendGcodeLine(fmt.Sprintf("M106 P%d S%d", fanNum, speedInt)), nil
+}
+
+// AutoHome homes the printer
+func (c *PrinterMQTTClient) AutoHome() bool {
+	return c.sendGcodeLine("G28")
+}
+
+// SetBedHeight sets the Z-axis height
+func (c *PrinterMQTTClient) SetBedHeight(height int) bool {
+	return c.sendGcodeLine(fmt.Sprintf("G90\nG0 Z%d", height))
+}
+
+// SetPartFanSpeedInt sets the part fan speed (0-255)
+func (c *PrinterMQTTClient) SetPartFanSpeedInt(speed int) bool {
+	_, err := c.SetPartFanSpeed(speed)
+	if err != nil {
+		logger.Error.Printf("Failed to set part fan speed: %v", err)
+		return false
+	}
+	return true
+}
+
+// SetAuxFanSpeedInt sets the aux fan speed (0-255)
+func (c *PrinterMQTTClient) SetAuxFanSpeedInt(speed int) bool {
+	_, err := c.SetAuxFanSpeed(speed)
+	if err != nil {
+		logger.Error.Printf("Failed to set aux fan speed: %v", err)
+		return false
+	}
+	return true
+}
+
+// SetChamberFanSpeedInt sets the chamber fan speed (0-255)
+func (c *PrinterMQTTClient) SetChamberFanSpeedInt(speed int) bool {
+	_, err := c.SetChamberFanSpeed(speed)
+	if err != nil {
+		logger.Error.Printf("Failed to set chamber fan speed: %v", err)
+		return false
+	}
+	return true
+}
+
+// SetAutoStep_recovery sets auto step recovery
+func (c *PrinterMQTTClient) SetAutoStepRecovery(autoStepRecovery bool) bool {
+	return c.publishCommand(map[string]interface{}{
+		"print": map[string]interface{}{
+			"command":       "gcode_line",
+			"auto_recovery": autoStepRecovery,
+		},
+	})
+}
+
+// StartPrint3MF starts printing a 3MF file
+func (c *PrinterMQTTClient) StartPrint3MF(filename string, plateNumber interface{}, useAMS bool, amsMapping []int, skipObjects []int, flowCalibration bool) bool {
+	var plateLocation string
+
+	switch pn := plateNumber.(type) {
+	case int:
+		plateLocation = fmt.Sprintf("Metadata/plate_%d.gcode", pn)
+	case string:
+		plateLocation = pn
+	default:
+		plateLocation = "Metadata/plate_1.gcode"
+	}
+
+	payload := map[string]interface{}{
+		"print": map[string]interface{}{
+			"command":          "project_file",
+			"param":            plateLocation,
+			"file":             filename,
+			"bed_leveling":     true,
+			"bed_type":         "textured_plate",
+			"flow_cali":        flowCalibration,
+			"vibration_cali":   true,
+			"url":              fmt.Sprintf("ftp:///%s", filename),
+			"layer_inspect":    false,
+			"sequence_id":      "10000000",
+			"use_ams":          useAMS,
+			"ams_mapping":      amsMapping,
+		},
+	}
+
+	if skipObjects != nil && len(skipObjects) > 0 {
+		payload["print"].(map[string]interface{})["skip_objects"] = skipObjects
+	}
+
+	return c.publishCommand(payload)
+}
+
+// StopPrint stops the current print
+func (c *PrinterMQTTClient) StopPrint() bool {
+	return c.publishCommand(map[string]interface{}{
+		"print": map[string]interface{}{
+			"command": "stop",
+		},
+	})
+}
+
+// PausePrint pauses the current print
+func (c *PrinterMQTTClient) PausePrint() bool {
+	if c.GetPrinterState() == states.GcodeStatePause {
+		return true
+	}
+	return c.publishCommand(map[string]interface{}{
+		"print": map[string]interface{}{
+			"command": "pause",
+		},
+	})
+}
+
+// ResumePrint resumes a paused print
+func (c *PrinterMQTTClient) ResumePrint() bool {
+	if c.GetPrinterState() == states.GcodeStateRunning {
+		return true
+	}
+	return c.publishCommand(map[string]interface{}{
+		"print": map[string]interface{}{
+			"command": "resume",
+		},
+	})
+}
+
+// SkipObjects skips objects during printing
+func (c *PrinterMQTTClient) SkipObjects(objList []int) bool {
+	return c.publishCommand(map[string]interface{}{
+		"print": map[string]interface{}{
+			"command":   "skip_objects",
+			"obj_list":  objList,
+		},
+	})
+}
+
+// GetSkippedObjects gets the list of skipped objects
+func (c *PrinterMQTTClient) GetSkippedObjects() []int {
+	objs := c.getPrintValue("s_obj", []interface{}{})
+	result := []int{}
+
+	if objList, ok := objs.([]interface{}); ok {
+		for _, o := range objList {
+			switch v := o.(type) {
+			case float64:
+				result = append(result, int(v))
+			case int:
+				result = append(result, v)
+			}
+		}
+	}
+	return result
+}
+
+// SetPrinterFilament sets the printer filament settings
+func (c *PrinterMQTTClient) SetPrinterFilament(filament filamentinfo.AMSFilamentSettings, color string, amsID, trayID int) bool {
+	if len(color) != 6 {
+		logger.Error.Println("Color must be a 6 character hex code")
+		return false
+	}
+
+	return c.publishCommand(map[string]interface{}{
+		"print": map[string]interface{}{
+			"command":          "ams_filament_setting",
+			"ams_id":           amsID,
+			"tray_id":          trayID,
+			"tray_info_idx":    filament.TrayInfoIdx,
+			"tray_color":       strings.ToUpper(color) + "FF",
+			"nozzle_temp_min":  filament.NozzleTempMin,
+			"nozzle_temp_max":  filament.NozzleTempMax,
+			"tray_type":        filament.TrayType,
+		},
+	})
+}
+
+// LoadFilamentSpool loads filament from the spool
+func (c *PrinterMQTTClient) LoadFilamentSpool() bool {
+	return c.publishCommand(map[string]interface{}{
+		"print": map[string]interface{}{
+			"command":   "ams_change_filament",
+			"target":    255,
+			"curr_temp": 215,
+			"tar_temp":  215,
+		},
+	})
+}
+
+// UnloadFilamentSpool unloads filament from the spool
+func (c *PrinterMQTTClient) UnloadFilamentSpool() bool {
+	return c.publishCommand(map[string]interface{}{
+		"print": map[string]interface{}{
+			"command":   "ams_change_filament",
+			"target":    254,
+			"curr_temp": 215,
+			"tar_temp":  215,
+		},
+	})
+}
+
+// ResumeFilamentAction resumes the filament action
+func (c *PrinterMQTTClient) ResumeFilamentAction() bool {
+	return c.publishCommand(map[string]interface{}{
+		"print": map[string]interface{}{
+			"command": "ams_control",
+			"param":   "resume",
+		},
+	})
+}
+
+// Calibration starts printer calibration
+func (c *PrinterMQTTClient) Calibration(bedLeveling, motorNoiseCancellation, vibrationCompensation bool) bool {
+	bitmask := 0
+
+	if bedLeveling {
+		bitmask |= 1 << 1
+	}
+	if vibrationCompensation {
+		bitmask |= 1 << 2
+	}
+	if motorNoiseCancellation {
+		bitmask |= 1 << 3
+	}
+
+	return c.publishCommand(map[string]interface{}{
+		"print": map[string]interface{}{
+			"command": "calibration",
+			"option":  bitmask,
+		},
+	})
+}
+
+// SetOnboardPrinterTimelapse enables/disables onboard timelapse
+func (c *PrinterMQTTClient) SetOnboardPrinterTimelapse(enable bool) bool {
+	control := "enable"
+	if !enable {
+		control = "disable"
+	}
+
+	return c.publishCommand(map[string]interface{}{
+		"camera": map[string]interface{}{
+			"command": "ipcam_record_set",
+			"control": control,
+		},
+	})
+}
+
+// SetNozzleInfo sets the nozzle information
+func (c *PrinterMQTTClient) SetNozzleInfo(nozzleType printerinfo.NozzleType, nozzleDiameter float64) bool {
+	return c.publishCommand(map[string]interface{}{
+		"system": map[string]interface{}{
+			"accessory_type":  "nozzle",
+			"command":         "set_accessories",
+			"nozzle_diameter": nozzleDiameter,
+			"nozzle_type":     nozzleType.String(),
+		},
+	})
+}
+
+// NewPrinterFirmware checks if new firmware is available
+func (c *PrinterMQTTClient) NewPrinterFirmware() string {
+	upgradeState, ok := c.getPrintValue("upgrade_state", nil).(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	newVerList, ok := upgradeState["new_ver_list"].([]interface{})
+	if !ok {
+		return ""
+	}
+
+	for _, item := range newVerList {
+		if i, ok := item.(map[string]interface{}); ok {
+			if name, ok := i["name"].(string); ok && name == "ota" {
+				if ver, ok := i["new_ver"].(string); ok {
+					return ver
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// UpgradeFirmware upgrades to the latest firmware
+func (c *PrinterMQTTClient) UpgradeFirmware(override bool) bool {
+	newFirmware := c.NewPrinterFirmware()
+	if newFirmware == "" {
+		return false
+	}
+
+	if compareVersions(newFirmware, "1.08") >= 0 && !override {
+		logger.Warn.Printf("Firmware %s may cause API incompatibility. Use override=true to force.", newFirmware)
+		return false
+	}
+
+	return c.publishCommand(map[string]interface{}{
+		"upgrade": map[string]interface{}{
+			"command":  "upgrade_confirm",
+			"src_id":   2,
+		},
+	})
+}
+
+// ProcessAMS processes AMS information from the data
+func (c *PrinterMQTTClient) ProcessAMS() {
+	c.mu.RLock()
+	printData, ok := c.data["print"].(map[string]interface{})
+	c.mu.RUnlock()
+
+	if !ok {
+		return
+	}
+
+	amsInfo, ok := printData["ams"].(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	c.amsHub = ams.NewAMSHub()
+
+	amsExistBits, ok := amsInfo["ams_exist_bits"].(string)
+	if !ok || amsExistBits == "0" {
+		return
+	}
+
+	amsUnits, ok := amsInfo["ams"].([]interface{})
+	if !ok {
+		return
+	}
+
+	for k, amsUnit := range amsUnits {
+		if amsData, ok := amsUnit.(map[string]interface{}); ok {
+			humidity := 0
+			if h, ok := amsData["humidity"].(float64); ok {
+				humidity = int(h)
+			}
+			temp := 0.0
+			if t, ok := amsData["temp"].(float64); ok {
+				temp = t
+			}
+			id := k
+			if i, ok := amsData["id"].(float64); ok {
+				id = int(i)
+			}
+
+			amsUnit := ams.NewAMS(humidity, temp)
+
+			if trays, ok := amsData["tray"].([]interface{}); ok {
+				for _, tray := range trays {
+					if trayData, ok := tray.(map[string]interface{}); ok {
+						trayID := 0
+						if tid, ok := trayData["id"].(float64); ok {
+							trayID = int(tid)
+						}
+						if _, ok := trayData["n"]; ok {
+							trayInfo := filamentinfo.FilamentTrayFromDict(trayData)
+							amsUnit.SetFilamentTray(trayID, &trayInfo)
+						}
+					}
+				}
+			}
+
+			c.amsHub.Set(id, amsUnit)
+		}
+	}
+}
+
+// AMSHub returns the AMS hub
+func (c *PrinterMQTTClient) AMSHub() *ams.AMSHub {
+	return c.amsHub
+}
+
+// VTTray gets the external spool filament tray
+func (c *PrinterMQTTClient) VTTray() filamentinfo.FilamentTray {
+	trayData := c.getPrintValue("vt_tray", nil)
+	if trayData == nil {
+		return filamentinfo.FilamentTray{}
+	}
+
+	if trayMap, ok := trayData.(map[string]interface{}); ok {
+		return filamentinfo.FilamentTrayFromDict(trayMap)
+	}
+	return filamentinfo.FilamentTray{}
+}
+
+// SubtaskName gets the current subtask name
+func (c *PrinterMQTTClient) SubtaskName() string {
+	name, ok := c.getPrintValue("subtask_name", "").(string)
+	if !ok {
+		return ""
+	}
+	return name
+}
+
+// GcodeFile gets the current gcode file name
+func (c *PrinterMQTTClient) GcodeFile() string {
+	file, ok := c.getPrintValue("gcode_file", "").(string)
+	if !ok {
+		return ""
+	}
+	return file
+}
+
+// PrintErrorCode gets the print error code
+func (c *PrinterMQTTClient) PrintErrorCode() int {
+	code := c.getPrintValue("print_error", 0)
+	switch v := code.(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	}
+	return 0
+}
+
+// PrintType gets the print type (cloud/local)
+func (c *PrinterMQTTClient) PrintType() string {
+	ptype, ok := c.getPrintValue("print_type", "").(string)
+	if !ok {
+		return ""
+	}
+	return ptype
+}
+
+// WifiSignal gets the WiFi signal strength in dBm
+func (c *PrinterMQTTClient) WifiSignal() string {
+	signal, ok := c.getPrintValue("wifi_signal", "").(string)
+	if !ok {
+		return ""
+	}
+	return signal
+}
+
+// Reboot reboots the printer
+func (c *PrinterMQTTClient) Reboot() bool {
+	logger.Warn.Println("Sending reboot command!")
+	return c.publishCommand(map[string]interface{}{
+		"system": map[string]interface{}{
+			"command": "reboot",
+		},
+	})
+}
+
+// GetAccessCode gets the access code
+func (c *PrinterMQTTClient) GetAccessCode() string {
+	systemData := c.getInfoValue("system", nil)
+	if systemData == nil {
+		return c.access
+	}
+
+	if sysMap, ok := systemData.(map[string]interface{}); ok {
+		if code, ok := sysMap["command"].(string); ok {
+			if code != c.access {
+				logger.Error.Printf("Unexpected access code: expected %s, got %s", c.access, code)
+			}
+			return code
+		}
+	}
+	return c.access
+}
+
+// RequestAccessCode requests the access code from the printer
+func (c *PrinterMQTTClient) RequestAccessCode() bool {
+	return c.publishCommand(map[string]interface{}{
+		"system": map[string]interface{}{
+			"command": "get_access_code",
+		},
+	})
+}
+
+// GetFirmwareHistory gets the firmware history
+func (c *PrinterMQTTClient) GetFirmwareHistory() []map[string]interface{} {
+	upgradeData := c.getInfoValue("upgrade", nil)
+	if upgradeData == nil {
+		return []map[string]interface{}{}
+	}
+
+	if upgradeMap, ok := upgradeData.(map[string]interface{}); ok {
+		if history, ok := upgradeMap["firmware_optional"].([]interface{}); ok {
+			result := make([]map[string]interface{}, len(history))
+			for i, h := range history {
+				if hm, ok := h.(map[string]interface{}); ok {
+					result[i] = hm
+				}
+			}
+			return result
+		}
+	}
+	return []map[string]interface{}{}
+}
+
+// DowngradeFirmware downgrades to a specific firmware version
+func (c *PrinterMQTTClient) DowngradeFirmware(firmwareVersion string) bool {
+	firmwareHistory := c.GetFirmwareHistory()
+	if len(firmwareHistory) == 0 {
+		logger.Warn.Println("Firmware history not up to date")
+		return false
+	}
+
+	var targetFirmware map[string]interface{}
+	for _, firmware := range firmwareHistory {
+		if fwData, ok := firmware["firmware"].(map[string]interface{}); ok {
+			if version, ok := fwData["version"].(string); ok && version == firmwareVersion {
+				targetFirmware = firmware
+				break
+			}
+		}
+	}
+
+	if targetFirmware == nil {
+		logger.Warn.Printf("Firmware %s not found in listed firmware", firmwareVersion)
+		return false
+	}
+
+	return c.publishCommand(map[string]interface{}{
+		"upgrade": map[string]interface{}{
+			"command":           "upgrade_history",
+			"src_id":            2,
+			"firmware_optional": targetFirmware,
+		},
+	})
+}
