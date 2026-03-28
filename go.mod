@@ -1,4 +1,4 @@
-module github.com/bambuapi-go/bambuapi-go
+module github.com/asfrm/bambuapi-go
 
 go 1.21
 
@@ -9,7 +9,8 @@ require (
 
 require (
 	github.com/gorilla/websocket v1.5.0 // indirect
+	github.com/hashicorp/errwrap v1.0.0 // indirect
+	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	golang.org/x/net v0.17.0 // indirect
 	golang.org/x/sync v0.1.0 // indirect
-	golang.org/x/text v0.14.0 // indirect
 )

@@ -1,7 +1,7 @@
 package ams
 
 import (
-	"github.com/bambulabs_api/go/bambulabs_api/filamentinfo"
+	"github.com/asfrm/bambuapi-go/bambulabs_api/filamentinfo"
 )
 
 // AMS represents the Bambu Lab AMS (Automated Material System)

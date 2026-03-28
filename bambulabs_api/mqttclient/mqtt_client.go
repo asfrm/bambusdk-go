@@ -12,11 +12,11 @@ import (
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 
-	"github.com/bambulabs_api/go/bambulabs_api/ams"
-	"github.com/bambulabs_api/go/bambulabs_api/filamentinfo"
-	"github.com/bambulabs_api/go/bambulabs_api/logger"
-	"github.com/bambulabs_api/go/bambulabs_api/printerinfo"
-	"github.com/bambulabs_api/go/bambulabs_api/states"
+	"github.com/asfrm/bambuapi-go/bambulabs_api/ams"
+	"github.com/asfrm/bambuapi-go/bambulabs_api/filamentinfo"
+	"github.com/asfrm/bambuapi-go/bambulabs_api/logger"
+	"github.com/asfrm/bambuapi-go/bambulabs_api/printerinfo"
+	"github.com/asfrm/bambuapi-go/bambulabs_api/states"
 )
 
 // PrinterMQTTClient handles MQTT communication with the printer

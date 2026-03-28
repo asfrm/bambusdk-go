@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bambulabs_api/go/bambulabs_api/logger"
+	"github.com/asfrm/bambuapi-go/bambulabs_api/logger"
 )
 
 // PrinterCamera handles camera stream from the printer

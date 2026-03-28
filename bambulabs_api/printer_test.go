@@ -3,9 +3,9 @@ package bambulabs_api
 import (
 	"testing"
 
-	"github.com/bambuapi-go/bambuapi-go/bambulabs_api/filamentinfo"
-	"github.com/bambuapi-go/bambuapi-go/bambulabs_api/printerinfo"
-	"github.com/bambuapi-go/bambuapi-go/bambulabs_api/states"
+	"github.com/asfrm/bambuapi-go/bambulabs_api/filamentinfo"
+	"github.com/asfrm/bambuapi-go/bambulabs_api/printerinfo"
+	"github.com/asfrm/bambuapi-go/bambulabs_api/states"
 )
 
 func TestNewPrinter(t *testing.T) {
