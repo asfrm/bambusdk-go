@@ -899,8 +899,18 @@ func (c *PrinterMQTTClient) SetAutoStepRecovery(autoStepRecovery bool) bool {
 	})
 }
 
-// StartPrint3MF starts printing a 3MF file.
-func (c *PrinterMQTTClient) StartPrint3MF(filename string, plateNumber interface{}, useAMS bool, amsMapping []int, skipObjects []int, flowCalibration bool) bool {
+// StartPrint3MF starts printing a 3MF file using the exact Bambu Lab "project_file" command.
+// This is the same payload format used by Bambu Studio and Handy to trigger print jobs.
+//
+// Parameters:
+//   - filename: Name of the 3MF file on the FTP server
+//   - plateNumber: Plate number (int) or plate path (string), defaults to "Metadata/plate_1.gcode"
+//   - useAMS: Whether to use AMS filament system
+//   - amsMapping: AMS slot mapping (e.g., [0] for first slot)
+//   - skipObjects: List of object indices to skip (optional)
+//   - flowCalibration: Whether to enable flow calibration
+//   - bedType: Bed type string (e.g., "textured_plate", "smooth_plate")
+func (c *PrinterMQTTClient) StartPrint3MF(filename string, plateNumber interface{}, useAMS bool, amsMapping []int, skipObjects []int, flowCalibration bool, bedType string) bool {
 	var plateLocation string
 
 	switch pn := plateNumber.(type) {
@@ -912,13 +922,17 @@ func (c *PrinterMQTTClient) StartPrint3MF(filename string, plateNumber interface
 		plateLocation = "Metadata/plate_1.gcode"
 	}
 
+	if bedType == "" {
+		bedType = "textured_plate"
+	}
+
 	payload := map[string]interface{}{
 		"print": map[string]interface{}{
 			"command":        "project_file",
 			"param":          plateLocation,
 			"file":           filename,
 			"bed_leveling":   true,
-			"bed_type":       "textured_plate",
+			"bed_type":       bedType,
 			"flow_cali":      flowCalibration,
 			"vibration_cali": true,
 			"url":            fmt.Sprintf("ftp:///%s", filename),

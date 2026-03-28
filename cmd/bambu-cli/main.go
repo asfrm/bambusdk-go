@@ -583,9 +583,126 @@ func cmdAMS(p *printer.Printer, args []string) error {
 	return nil
 }
 
+// cmdCamera handles the camera command.
+func cmdCamera(p *printer.Printer, args []string) error {
+	fs := flag.NewFlagSet("camera", flag.ExitOnError)
+	outputFile := fs.String("o", "frame.jpg", "Output file path")
+	count := fs.Int("n", 1, "Number of frames to capture (0 for continuous until Ctrl+C)")
+	interval := fs.Duration("i", 1*time.Second, "Interval between frames (for multi-frame capture)")
+	fs.Parse(args)
+
+	if *count == 1 {
+		// Single frame capture
+		fmt.Println("Capturing camera frame...")
+
+		frameBytes, err := p.CaptureFrame()
+		if err != nil {
+			return fmt.Errorf("failed to capture frame: %w", err)
+		}
+
+		if err := os.WriteFile(*outputFile, frameBytes, 0644); err != nil {
+			return fmt.Errorf("failed to save image: %w", err)
+		}
+
+		fmt.Printf("Camera frame saved to: %s (%d bytes)\n", *outputFile, len(frameBytes))
+		return nil
+	}
+
+	// Multi-frame capture
+	fmt.Printf("Capturing %d frames with %v interval...\n", *count, *interval)
+
+	for i := 0; i < *count || *count == 0; i++ {
+		frameBytes, err := p.CaptureFrame()
+		if err != nil {
+			return fmt.Errorf("failed to capture frame %d: %w", i+1, err)
+		}
+
+		filename := fmt.Sprintf("frame_%d.jpg", i+1)
+		if *outputFile != "frame.jpg" {
+			// Use output file as prefix if specified
+			filename = fmt.Sprintf("%s_%d.jpg", strings.TrimSuffix(*outputFile, ".jpg"), i+1)
+		}
+
+		if err := os.WriteFile(filename, frameBytes, 0644); err != nil {
+			return fmt.Errorf("failed to save frame %d: %w", i+1, err)
+		}
+
+		fmt.Printf("Frame %d saved: %s (%d bytes)\n", i+1, filename, len(frameBytes))
+
+		if *count > 0 && i < *count-1 {
+			time.Sleep(*interval)
+		} else if *count == 0 {
+			time.Sleep(*interval)
+		}
+	}
+
+	return nil
+}
+
+// cmdFTPList handles the ftp-list command.
+func cmdFTPList(p *printer.Printer, args []string) error {
+	path := ""
+	if len(args) > 0 {
+		path = args[0]
+	}
+
+	fmt.Printf("Listing directory: %s\n", path)
+	files, err := p.ListDirectory(path)
+	if err != nil {
+		return fmt.Errorf("failed to list directory: %w", err)
+	}
+
+	if len(files) == 0 {
+		fmt.Println("Directory is empty")
+		return nil
+	}
+
+	fmt.Printf("Found %d files/directories:\n", len(files))
+	for _, file := range files {
+		fmt.Printf("  %s\n", file)
+	}
+	return nil
+}
+
+// cmdPrint handles the print command (upload and print a 3MF/Gcode file).
+func cmdPrint(p *printer.Printer, args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: bambu-cli print <file.3mf|file.gcode> [options]\nUse --help for options")
+	}
+
+	fs := flag.NewFlagSet("print", flag.ExitOnError)
+	plate := fs.Int("plate", 1, "Plate number (1-4)")
+	useAMS := fs.Bool("ams", true, "Use AMS filament system")
+	amsMapping := fs.Int("ams-map", 0, "AMS slot mapping (0-7)")
+	flowCalib := fs.Bool("flow-calib", true, "Enable flow calibration")
+	bedType := fs.String("bed", "textured_plate", "Bed type (textured_plate, smooth_plate, etc.)")
+	fs.Parse(args)
+
+	if len(fs.Args()) < 1 {
+		return fmt.Errorf("missing file argument")
+	}
+
+	localPath := fs.Args()[0]
+
+	fmt.Printf("Submitting print job: %s\n", localPath)
+	fmt.Printf("  Plate: %d\n", *plate)
+	fmt.Printf("  AMS: %v (slot %d)\n", *useAMS, *amsMapping)
+	fmt.Printf("  Flow Calibration: %v\n", *flowCalib)
+	fmt.Printf("  Bed Type: %s\n", *bedType)
+
+	uploadedPath, err := p.SubmitPrintJobFromFile(localPath, *plate, *useAMS, []int{*amsMapping}, *flowCalib, *bedType)
+	if err != nil {
+		return fmt.Errorf("failed to submit print job: %w", err)
+	}
+
+	fmt.Printf("Print job submitted successfully!\n")
+	fmt.Printf("  Uploaded file: %s\n", uploadedPath)
+	return nil
+}
+
 // printUsage prints the main usage information.
 func printUsage() {
-	fmt.Println(`bambu-cli - Bambu Lab Printer CLI Tool
+	fmt.Print(`bambu-cli - Bambu Lab Printer CLI Tool
 
 Usage:
   bambu-cli [flags] <command> [arguments]
@@ -612,14 +729,27 @@ Commands:
   info                Show printer information
   firmware            Check/upgrade firmware
   reboot              Reboot the printer
+  camera              Capture camera frame(s) (-o output, -n count, -i interval)
+  print <file>        Upload and print a 3MF/Gcode file (--plate, --ams, --bed)
+  ftp-list [path]     List files via FTP (default: root directory)
 
-Examples:
+Camera Examples:
+  bambu-cli -ip 192.168.1.100 -code 12345678 -serial ABC123 camera
+  bambu-cli -ip 192.168.1.100 -code 12345678 -serial ABC123 camera -o myframe.jpg
+  bambu-cli -ip 192.168.1.100 -code 12345678 -serial ABC123 camera -n 10 -i 2s
+
+Print Examples:
+  bambu-cli -ip 192.168.1.100 -code 12345678 -serial ABC123 print model.3mf
+  bambu-cli -ip 192.168.1.100 -code 12345678 -serial ABC123 print model.3mf --plate 2 --bed smooth_plate
+
+Other Examples:
   bambu-cli -ip 192.168.1.100 -code 12345678 -serial ABC123 status
   bambu-cli -ip 192.168.1.100 -code 12345678 -serial ABC123 temp --nozzle 220 --bed 60
   bambu-cli -ip 192.168.1.100 -code 12345678 -serial ABC123 light on
   bambu-cli -ip 192.168.1.100 -code 12345678 -serial ABC123 gcode "G28"
   bambu-cli -ip 192.168.1.100 -code 12345678 -serial ABC123 status --json
   bambu-cli -ip 192.168.1.100 -code 12345678 -serial ABC123 status --watch
+  bambu-cli -ip 192.168.1.100 -code 12345678 -serial ABC123 ftp-list image
 `)
 }
 
@@ -688,6 +818,12 @@ func main() {
 		cmdErr = cmdFirmware(p, cmdArgs)
 	case "reboot":
 		cmdErr = cmdReboot(p, cmdArgs)
+	case "camera":
+		cmdErr = cmdCamera(p, cmdArgs)
+	case "print":
+		cmdErr = cmdPrint(p, cmdArgs)
+	case "ftp-list":
+		cmdErr = cmdFTPList(p, cmdArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", command)
 		printUsage()

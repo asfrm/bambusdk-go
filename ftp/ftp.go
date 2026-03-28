@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/textproto"
 	"os"
@@ -16,10 +17,19 @@ import (
 )
 
 var (
-	debugLog = log.New(os.Stdout, "[DEBUG] ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
-	errorLog = log.New(os.Stderr, "[ERROR] ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
-	infoLog  = log.New(os.Stdout, "[INFO] ", log.Ldate|log.Ltime|log.Lmicroseconds)
+	// Debug logging is disabled by default. Set BAMBU_DEBUG=1 to enable.
+	debugLog *log.Logger
+	errorLog = log.New(os.Stderr, "[FTP ERROR] ", log.Ldate|log.Ltime|log.Lshortfile)
+	infoLog  = log.New(os.Stdout, "[FTP INFO] ", log.Ldate|log.Ltime)
 )
+
+func init() {
+	if os.Getenv("BAMBU_DEBUG") == "1" {
+		debugLog = log.New(os.Stdout, "[FTP DEBUG] ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
+	} else {
+		debugLog = log.New(ioutil.Discard, "", 0)
+	}
+}
 
 // PrinterFTPClient handles FTP communication with the printer.
 type PrinterFTPClient struct {
