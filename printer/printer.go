@@ -3,12 +3,14 @@ package printer
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"image"
 	_ "image/jpeg"
 	"io"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/asfrm/bambuapi-go/ams"
@@ -20,6 +22,50 @@ import (
 	"github.com/asfrm/bambuapi-go/states"
 )
 
+// ConnectionState represents the connection state of a printer
+type ConnectionState int
+
+const (
+	StateDisconnected ConnectionState = iota
+	StateConnecting
+	StateConnected
+	StateError
+	StateTimeout
+)
+
+func (s ConnectionState) String() string {
+	switch s {
+	case StateDisconnected:
+		return "disconnected"
+	case StateConnecting:
+		return "connecting"
+	case StateConnected:
+		return "connected"
+	case StateError:
+		return "error"
+	case StateTimeout:
+		return "timeout"
+	default:
+		return "unknown"
+	}
+}
+
+// HealthStatus represents the health status of all printer components
+type HealthStatus struct {
+	MQTT      ComponentHealth `json:"mqtt"`
+	FTP       ComponentHealth `json:"ftp"`
+	Camera    ComponentHealth `json:"camera"`
+	Timestamp time.Time       `json:"timestamp"`
+}
+
+// ComponentHealth represents the health of a single component
+type ComponentHealth struct {
+	Connected bool          `json:"connected"`
+	Latency   time.Duration `json:"latency_ms"`
+	LastError string        `json:"last_error,omitempty"`
+	LastCheck time.Time     `json:"last_check"`
+}
+
 // Printer is the main client for connecting to and controlling a Bambu Lab 3D printer.
 type Printer struct {
 	IPAddress  string
@@ -29,6 +75,11 @@ type Printer struct {
 	MQTTClient   *mqtt.PrinterMQTTClient
 	CameraClient *camera.PrinterCamera
 	FTPClient    *ftp.PrinterFTPClient
+
+	// Connection state tracking
+	stateMu          sync.RWMutex
+	lastHealthCheck  time.Time
+	lastHealthStatus *HealthStatus
 }
 
 // NewPrinter creates a new Printer instance.
@@ -110,6 +161,87 @@ func (p *Printer) Disconnect() {
 	p.CameraClient.Stop()
 }
 
+// DisconnectWithContext disconnects from the printer with context support.
+// This allows cancellation of the disconnect operation if it hangs.
+func (p *Printer) DisconnectWithContext(ctx context.Context) error {
+	done := make(chan struct{})
+
+	go func() {
+		p.MQTTClient.Stop()
+		p.CameraClient.Stop()
+		close(done)
+	}()
+
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("disconnect cancelled: %w", ctx.Err())
+	case <-done:
+		return nil
+	}
+}
+
+// ConnectWithContext connects to the printer with context support.
+// This allows cancellation and proper timeout handling.
+func (p *Printer) ConnectWithContext(ctx context.Context) error {
+	// Disable aggressive mode to avoid blocking on info requests
+	p.MQTTClient.SetPushallAggressive(false)
+
+	// Start MQTT client
+	if err := p.MQTTClient.Start(); err != nil {
+		return fmt.Errorf("failed to start MQTT client: %w", err)
+	}
+
+	// Wait for MQTT connection with context timeout
+	connectionTicker := time.NewTicker(50 * time.Millisecond)
+	defer connectionTicker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			p.MQTTClient.Stop()
+			return fmt.Errorf("connection cancelled: %w", ctx.Err())
+		case <-connectionTicker.C:
+			if p.MQTTClient.IsConnected() {
+				break
+			}
+		}
+		break
+	}
+
+	// Wait for initial data payload with context
+	select {
+	case <-ctx.Done():
+		p.MQTTClient.Stop()
+		return fmt.Errorf("initial data wait cancelled: %w", ctx.Err())
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	// Request full state from printer
+	p.MQTTClient.RequestFullState()
+
+	// Wait for full state to arrive with context timeout
+	dataTicker := time.NewTicker(100 * time.Millisecond)
+	defer dataTicker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			// Timeout but continue with whatever data we have
+			return nil
+		case <-dataTicker.C:
+			dump := p.MQTTClient.Dump()
+			if printData, ok := dump["print"].(map[string]interface{}); ok {
+				// Check for key fields that indicate full state
+				if _, hasBed := printData["bed_temper"]; hasBed {
+					if _, hasAms := printData["ams"]; hasAms {
+						return nil // Full state received
+					}
+				}
+			}
+		}
+	}
+}
+
 // SetStateUpdateCallback sets a callback function to be called on each state update.
 // The callback is triggered whenever new MQTT data is received and parsed.
 // Only one callback can be registered at a time.
@@ -137,6 +269,112 @@ func (p *Printer) MQTTClientConnected() bool {
 // MQTTClientReady checks if the MQTT client is ready.
 func (p *Printer) MQTTClientReady() bool {
 	return p.MQTTClient.Ready()
+}
+
+// Ping performs a health check on the printer by verifying MQTT connection
+// and optionally sending a ping command. Returns error if printer is unreachable.
+func (p *Printer) Ping(ctx context.Context) error {
+	// Check MQTT connection first
+	if !p.MQTTClient.IsConnected() {
+		return fmt.Errorf("MQTT not connected")
+	}
+
+	// Try to request state update as a ping
+	// This is a lightweight operation that should respond quickly
+	p.MQTTClient.RequestFullState()
+
+	// Wait for response with context timeout
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("ping timeout: %w", ctx.Err())
+	case <-time.After(500 * time.Millisecond):
+		// Give it a moment to respond
+		if p.MQTTClient.Ready() {
+			return nil
+		}
+		return fmt.Errorf("printer not responding to ping")
+	}
+}
+
+// GetConnectionState returns the current connection state of the printer
+func (p *Printer) GetConnectionState() ConnectionState {
+	if !p.MQTTClient.IsConnected() {
+		return StateDisconnected
+	}
+	if !p.MQTTClient.Ready() {
+		return StateConnecting
+	}
+	return StateConnected
+}
+
+// GetHealthStatus returns cached health status of all printer components
+func (p *Printer) GetHealthStatus() *HealthStatus {
+	p.stateMu.RLock()
+	defer p.stateMu.RUnlock()
+
+	if p.lastHealthStatus == nil {
+		// Return current state if no health check has been performed
+		return &HealthStatus{
+			Timestamp: time.Now(),
+			MQTT: ComponentHealth{
+				Connected: p.MQTTClient.IsConnected(),
+				LastCheck: time.Now(),
+			},
+			FTP: ComponentHealth{
+				Connected: p.FTPClient != nil,
+				LastCheck: time.Now(),
+			},
+			Camera: ComponentHealth{
+				Connected: p.CameraClient.IsAlive(),
+				LastCheck: time.Now(),
+			},
+		}
+	}
+
+	// Return cached status
+	status := *p.lastHealthStatus
+	return &status
+}
+
+// updateHealthStatus updates the cached health status
+func (p *Printer) updateHealthStatus(status *HealthStatus) {
+	p.stateMu.Lock()
+	defer p.stateMu.Unlock()
+	p.lastHealthStatus = status
+	p.lastHealthCheck = time.Now()
+}
+
+// PerformHealthCheck performs a comprehensive health check on all components
+// and caches the result. Use GetHealthStatus() to retrieve cached results.
+func (p *Printer) PerformHealthCheck(ctx context.Context) *HealthStatus {
+	status := &HealthStatus{
+		Timestamp: time.Now(),
+	}
+
+	// Check MQTT
+	mqttStart := time.Now()
+	status.MQTT.Connected = p.MQTTClient.IsConnected()
+	status.MQTT.Latency = time.Since(mqttStart)
+	status.MQTT.LastCheck = time.Now()
+	if !status.MQTT.Connected {
+		status.MQTT.LastError = "not connected"
+	}
+
+	// Check FTP (lightweight check - just verify client exists)
+	status.FTP.Connected = p.FTPClient != nil
+	status.FTP.LastCheck = time.Now()
+
+	// Check Camera
+	status.Camera.Connected = p.CameraClient.IsAlive()
+	status.Camera.LastCheck = time.Now()
+	if !status.Camera.Connected {
+		status.Camera.LastError = "camera not running"
+	}
+
+	// Cache the result
+	p.updateHealthStatus(status)
+
+	return status
 }
 
 // SetMQTTAggressiveMode sets whether to send aggressive pushall/info requests on connect.
@@ -407,6 +645,61 @@ func (p *Printer) RetryFilamentAction() bool {
 // GetCurrentState gets the current printer status.
 func (p *Printer) GetCurrentState() states.PrintStatus {
 	return p.MQTTClient.GetCurrentState()
+}
+
+// IsBusy returns true if the printer is busy performing a hardware task and cannot accept
+// conflicting hardware commands (like homing, calibration, or manual movements).
+//
+// A printer is considered busy if:
+//   - Its GcodeState is RUNNING or PREPARE (actively printing or preparing to print)
+//   - OR its PrintStatus indicates an explicit hardware task (not IDLE, not UNKNOWN, not PRINTING)
+//
+// This method provides a hardware-accurate busy state without requiring arbitrary timeouts.
+// Thread-safe: uses existing thread-safe getters GetState() and GetCurrentState().
+func (p *Printer) IsBusy() bool {
+	gcodeState := p.GetState()
+	printStatus := p.GetCurrentState()
+
+	// Check GcodeState first - RUNNING or PREPARE means busy
+	if gcodeState == states.GcodeStateRunning || gcodeState == states.GcodeStatePrepare {
+		return true
+	}
+
+	// Check PrintStatus - busy if not IDLE, not UNKNOWN, and not PRINTING (handled by GcodeState)
+	if printStatus != states.PrintStatusIdle &&
+		printStatus != states.PrintStatusUnknown &&
+		printStatus != states.PrintStatusPrinting {
+		return true
+	}
+
+	return false
+}
+
+// GetActivityDescription returns a human-readable string describing what the printer is currently doing.
+//
+// Returns:
+//   - "IDLE" if the printer is not busy
+//   - The GcodeState string (e.g., "RUNNING", "PREPARE") if GcodeState is RUNNING or PREPARE
+//   - The PrintStatus string (e.g., "CALIBRATING_MICRO_LIDAR", "HOMING_TOOLHEAD") if busy due to hardware task
+//
+// This method is designed for frontend display to inform users about current printer activity.
+// Thread-safe: uses existing thread-safe getters GetState() and GetCurrentState().
+func (p *Printer) GetActivityDescription() string {
+	gcodeState := p.GetState()
+	printStatus := p.GetCurrentState()
+
+	// If not busy, return IDLE
+	if !p.IsBusy() {
+		return "IDLE"
+	}
+
+	// If GcodeState is RUNNING or PREPARE, return that state
+	if gcodeState == states.GcodeStateRunning || gcodeState == states.GcodeStatePrepare {
+		return gcodeState.String()
+	}
+
+	// Otherwise, return the PrintStatus string (hardware task description)
+	return printStatus.String()
 }
 
 // GetSkippedObjects gets the list of skipped objects.

@@ -1,23 +1,170 @@
-BambuAPI-Go Integration Guide
-A comprehensive API reference for integrating Bambu Lab printers into the NexusHub backend.
+# BambuAPI-Go Integration Guide
 
-Table of Contents
-Installation & Setup
-Connection & Events
-Fleet Management
-Print Jobs
-Camera Streaming
-Printer Control
-State & Telemetry
-Error Handling
-Complete Examples
-Installation & Setup
-Import Path
+> **Comprehensive API reference and cheat sheet for integrating Bambu Lab 3D printers into Go applications**
+
+**SDK Version:** 1.0  
+**Go Version:** 1.21+  
+**Last Updated:** 2026-03-29
+
+---
+
+## Table of Contents
+
+- [Quick Reference](#quick-reference)
+- [Architecture Overview](#architecture-overview)
+- [Installation & Setup](#installation--setup)
+- [Connection & Lifecycle](#connection--lifecycle)
+- [Fleet Management](#fleet-management)
+- [Print Jobs](#print-jobs)
+- [Camera Streaming](#camera-streaming)
+- [Printer Control](#printer-control)
+- [State & Telemetry](#state--telemetry)
+- [Busy State Detection](#busy-state-detection)
+- [AMS Management](#ams-management)
+- [Error Handling](#error-handling)
+- [Complete Examples](#complete-examples)
+- [Troubleshooting](#troubleshooting)
+
+---
+
+## Quick Reference
+
+### Connection Ports & Protocols
+
+| Service    | Port | Protocol      | Authentication           |
+|------------|------|---------------|--------------------------|
+| MQTT       | 8883 | TLS + MQTT    | Username: `bblp`, Password: AccessCode |
+| FTP        | 990  | Implicit TLS  | Username: `bblp`, Password: AccessCode |
+| Camera     | 6000 | Custom TLS TCP| Binary header with credentials |
+
+### Core Methods Cheat Sheet
+
+| Category | Method | Description |
+|----------|--------|-------------|
+| **Connection** | `Connect()` | Connect to printer (blocks until ready) |
+| | `Disconnect()` | Disconnect all services |
+| | `ConnectWithContext(ctx)` | Connect with custom timeout |
+| **Status** | `GetState()` | Get G-code state (IDLE, RUNNING, etc.) |
+| | `GetCurrentState()` | Get detailed print status |
+| | `GetPercentage()` | Get print progress (0-100%) |
+| | `GetTime()` | Get remaining time (seconds) |
+| | `IsBusy()` | Check if printer is busy (hardware-accurate) |
+| | `GetActivityDescription()` | Get human-readable activity description |
+| **Temperature** | `GetNozzleTemperature()` | Get nozzle temp (°C) |
+| | `GetBedTemperature()` | Get bed temp (°C) |
+| | `GetChamberTemperature()` | Get chamber temp (°C) |
+| | `SetNozzleTemperature(n)` | Set nozzle temp |
+| | `SetBedTemperature(n)` | Set bed temp |
+| **Fans** | `SetPartFanSpeedInt(n)` | Set part fan (0-255) |
+| | `SetAuxFanSpeedInt(n)` | Set aux fan (0-255) |
+| | `SetChamberFanSpeedInt(n)` | Set chamber fan (0-255) |
+| **Control** | `HomePrinter()` | Home all axes |
+| | `PausePrint()` | Pause current print |
+| | `ResumePrint()` | Resume paused print |
+| | `StopPrint()` | Stop print |
+| | `Gcode(cmd, check)` | Send G-code command |
+| **Camera** | `CaptureFrame()` | Capture single frame (lazy) |
+| | `StartCamera()` | Start continuous stream |
+| | `GetCameraFrameBytes()` | Get latest frame as []byte |
+| **Files** | `UploadFile(data, name)` | Upload via FTP |
+| | `DownloadFile(path)` | Download via FTP |
+| | `SubmitPrintJob(...)` | Upload and start print |
+| **AMS** | `AMSHub()` | Get AMS hub info |
+| | `VTTray()` | Get external spool info |
+
+### State Enums Quick Reference
+
+```go
+// GcodeState - High-level printer state
+states.GcodeStateIdle       // "IDLE"
+states.GcodeStatePrepare    // "PREPARE"
+states.GcodeStateRunning    // "RUNNING"
+states.GcodeStatePause      // "PAUSE"
+states.GcodeStateFinish     // "FINISH"
+states.GcodeStateFailed     // "FAILED"
+
+// PrintStatus - Detailed status (selected)
+states.PrintStatusIdle                 // 255 - Idle
+states.PrintStatusPrinting             // 0 - Printing
+states.PrintStatusAutoBedLeveling      // 1 - Leveling
+states.PrintStatusHeatbedPreheating    // 2 - Preheating bed
+states.PrintStatusSweepingNozzle       // 3 - Sweeping
+states.PrintStatusChangingFilament     // 4 - Changing filament
+states.PrintStatusCalibratingExtrusion // 5 - Calibrating
+states.PrintStatusUserPaused           // 16 - User paused
+states.PrintStatusPrintSuccess         // 21 - Print success
+```
+
+---
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Application Layer                         │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
+│  │  bambu-cli  │  │   examples  │  │  Your Application Code  │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+┌─────────────────────────────────────────────────────────────────┐
+│                      Core Package Layer                          │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │                    printer/printer.go                      │  │
+│  │  ┌────────────┐ ┌────────────┐ ┌───────────────────────┐  │  │
+│  │  │ MQTTClient │ │ FTPClient  │ │    CameraClient       │  │  │
+│  │  └────────────┘ └────────────┘ └───────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+┌─────────────────────────────────────────────────────────────────┐
+│                     Communication Layer                          │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
+│  │  mqtt/      │  │   ftp/      │  │      camera/            │  │
+│  │  (TLS:8883) │  │  (TLS:990)  │  │      (TLS:6000)         │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+┌─────────────────────────────────────────────────────────────────┐
+│                      Support Packages                            │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────┐ │
+│  │    ams/     │  │  filament/  │  │  states/    │  │ fleet/  │ │
+│  │  (AMS Hub)  │  │  (Types)    │  │  (Enums)    │  │ (Pool)  │ │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Package Responsibilities
+
+| Package | Responsibility | Key Types |
+|---------|---------------|-----------|
+| `printer/` | Main client orchestration | `Printer`, `HealthStatus` |
+| `mqtt/` | MQTT communication (TLS:8883) | `PrinterMQTTClient` |
+| `camera/` | Camera streaming (TLS:6000) | `PrinterCamera` |
+| `ftp/` | File transfer (TLS:990) | `PrinterFTPClient` |
+| `fleet/` | Multi-printer management | `PrinterPool`, `PrinterConfig` |
+| `ams/` | AMS data parsing | `AMSHub`, `AMS` |
+| `filament/` | Filament types (40+) | `AMSFilamentSettings`, `FilamentTray` |
+| `states/` | State enums | `GcodeState`, `PrintStatus` |
+| `printerinfo/` | Printer metadata | `PrinterType`, `NozzleType` |
+
+---
+
+## Installation & Setup
+
+### Import Path
+
+```go
 import (
     "github.com/asfrm/bambuapi-go/printer"
     "github.com/asfrm/bambuapi-go/fleet"
+    "github.com/asfrm/bambuapi-go/states"
 )
-Single Printer Instance
+```
+
+### Single Printer Instance
+
+```go
 // Create printer instance
 p := printer.NewPrinter(ipAddress, accessCode, serialNumber)
 
@@ -28,7 +175,11 @@ if err := p.Connect(); err != nil {
 
 // Cleanup on shutdown
 defer p.Disconnect()
-PrinterPool for Fleet Management
+```
+
+### Printer Pool for Fleet Management
+
+```go
 // Create pool
 pool := fleet.NewPrinterPool()
 
@@ -50,14 +201,31 @@ for serial, err := range results {
 
 // Cleanup
 defer pool.DisconnectAll()
-Connection & Events
-Connect() Behavior
-The Connect() method is blocking and performs:
+```
 
-Establishes MQTT connection (TLS on port 8883)
-Requests full state from printer (pushall command)
-Waits for complete payload (up to 10 seconds)
-Returns error if timeout or connection fails
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `BAMBU_IP` | Printer IP address | - |
+| `BAMBU_SERIAL` | Printer serial number | - |
+| `BAMBU_ACCESS_CODE` | Printer access code (8 digits) | - |
+| `BAMBU_DEBUG=1` | Enable debug logging | off |
+
+---
+
+## Connection & Lifecycle
+
+### Connect() Behavior
+
+The `Connect()` method is **blocking** and performs:
+
+1. Establishes MQTT connection (TLS on port 8883)
+2. Requests full state from printer (`pushall` command)
+3. Waits for complete payload (up to 10 seconds)
+4. Returns error if timeout or connection fails
+
+```go
 // Connection with timeout handling
 p := printer.NewPrinter(ip, code, serial)
 if err := p.Connect(); err != nil {
@@ -65,9 +233,24 @@ if err := p.Connect(); err != nil {
     return err
 }
 // Printer is now ready for queries
-Real-Time State Updates
+```
+
+### Connection with Custom Timeout
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+defer cancel()
+
+if err := p.ConnectWithContext(ctx); err != nil {
+    return err
+}
+```
+
+### Real-Time State Updates
+
 For WebSocket backends, use the state update callback system:
 
+```go
 // Option 1: Callback function
 p.SetStateUpdateCallback(func() {
     // Called on every MQTT message
@@ -85,7 +268,11 @@ go func() {
         // Send to WebSocket clients
     }
 }()
-Connection Lifecycle
+```
+
+### Connection Lifecycle
+
+```go
 // Check connection status
 if !p.MQTTClientConnected() {
     // Reconnect logic
@@ -96,8 +283,27 @@ if !p.MQTTClientConnected() {
 
 // Graceful shutdown
 p.Disconnect()  // Stops MQTT and Camera
-Fleet Management
-Adding Printers
+```
+
+### Connection State Tracking
+
+```go
+// Get connection state
+state := p.GetConnectionState()
+// ConnectionState: StateDisconnected, StateConnecting, StateConnected, StateError, StateTimeout
+
+// Get health status
+health := p.GetHealthStatus()
+// Returns: HealthStatus{MQTT, FTP, Camera, Timestamp}
+```
+
+---
+
+## Fleet Management
+
+### Adding Printers
+
+```go
 pool := fleet.NewPrinterPool()
 
 // Add single printer
@@ -114,7 +320,11 @@ configs := []*fleet.PrinterConfig{
     {Serial: "S2", IP: "192.168.1.101", AccessCode: "CODE2"},
 }
 pool.AddPrinters(configs)
-Connecting Printers
+```
+
+### Connecting Printers
+
+```go
 // Connect single printer
 err := pool.ConnectPrinter("SERIAL123")
 
@@ -129,7 +339,11 @@ for serial, err := range results {
 // Check connection status
 connected := pool.ListConnectedPrinters()  // []string
 status := pool.GetStatus()  // PoolStatus{Total, Connected, Disconnected}
-Bulk Operations
+```
+
+### Bulk Operations
+
+```go
 // Get info for all printers
 infos := pool.GetAllPrinterInfo()  // []*PrinterInfo
 
@@ -147,14 +361,33 @@ results := pool.BroadcastGcode("M104 S200", true)  // map[string]bool
 
 // Get status from all printers
 statusMap := pool.BroadcastStatus()  // map[string]*PrinterStatus
-Print Jobs
-SubmitPrintJob Workflow
-The SubmitPrintJob method handles the complete upload-and-print workflow:
+```
 
-Lazy FTP Connection - Connects only when needed
-File Upload - Uploads 3MF/Gcode via FTP (implicit TLS, port 990)
-FTP Disconnect - Immediately closes FTP after upload
-MQTT Trigger - Sends project_file command to start print
+### Pool Status
+
+```go
+status := pool.GetStatus()
+fmt.Printf("Total: %d, Connected: %d, Disconnected: %d\n",
+    status.TotalPrinters,
+    status.ConnectedCount,
+    status.DisconnectedCount,
+)
+```
+
+---
+
+## Print Jobs
+
+### SubmitPrintJob Workflow
+
+The `SubmitPrintJob` method handles the complete upload-and-print workflow:
+
+1. **Lazy FTP Connection** - Connects only when needed
+2. **File Upload** - Uploads 3MF/Gcode via FTP (implicit TLS, port 990)
+3. **FTP Disconnect** - Immediately closes FTP after upload
+4. **MQTT Trigger** - Sends `project_file` command to start print
+
+```go
 // From io.Reader (e.g., HTTP multipart upload)
 uploadedPath, err := p.SubmitPrintJob(
     fileData,           // io.Reader
@@ -168,7 +401,11 @@ uploadedPath, err := p.SubmitPrintJob(
 if err != nil {
     return err
 }
-SubmitPrintJobFromFile
+```
+
+### SubmitPrintJobFromFile
+
+```go
 // From local file path
 uploadedPath, err := p.SubmitPrintJobFromFile(
     "/path/to/model.3mf",  // localPath
@@ -178,16 +415,23 @@ uploadedPath, err := p.SubmitPrintJobFromFile(
     true,                   // flowCalibration
     "textured_plate",       // bedType
 )
-Print Job Parameters
-Parameter	Type	Description
-fileData	io.Reader	3MF or Gcode file data
-filename	string	Remote filename on printer
-plateNumber	int	Plate number (1-4), defaults to 1
-useAMS	bool	Enable AMS filament system
-amsMapping	[]int	AMS slot indices (e.g., [0] for first slot)
-flowCalibration	bool	Enable flow calibration before print
-bedType	string	Bed type: textured_plate, smooth_plate, etc.
-Manual Control (Advanced)
+```
+
+### Print Job Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `fileData` | `io.Reader` | 3MF or Gcode file data |
+| `filename` | `string` | Remote filename on printer |
+| `plateNumber` | `int` | Plate number (1-4), defaults to 1 |
+| `useAMS` | `bool` | Enable AMS filament system |
+| `amsMapping` | `[]int` | AMS slot indices (e.g., `[0]` for first slot) |
+| `flowCalibration` | `bool` | Enable flow calibration before print |
+| `bedType` | `string` | Bed type: `textured_plate`, `smooth_plate`, etc. |
+
+### Manual Control (Advanced)
+
+```go
 // Step 1: Upload file
 uploadedPath, err := p.UploadFile(fileData, "model.3mf")
 if err != nil {
@@ -206,17 +450,28 @@ success := p.StartPrint(
 if !success {
     return fmt.Errorf("failed to start print")
 }
-Print Control
+```
+
+### Print Control
+
+```go
 p.PausePrint()    // Pause current print
 p.ResumePrint()   // Resume paused print
 p.StopPrint()     // Stop print (cannot resume)
 
 // Skip objects during multi-object print
 p.SkipObjects([]int{2, 3})  // Skip objects 2 and 3
-Camera Streaming
-On-Demand Frame Capture
-Camera connection is lazy - it only connects when CaptureFrame() or GetCameraFrame*() is called.
+```
 
+---
+
+## Camera Streaming
+
+### On-Demand Frame Capture
+
+Camera connection is **lazy** - it only connects when `CaptureFrame()` or `GetCameraFrame*()` is called.
+
+```go
 // Capture single frame (auto start/stop)
 frameBytes, err := p.CaptureFrame()
 if err != nil {
@@ -226,7 +481,11 @@ if err != nil {
 
 // Custom timeout
 frameBytes, err := p.CaptureFrameWithTimeout(15 * time.Second)
-Continuous Streaming
+```
+
+### Continuous Streaming
+
+```go
 // Start camera stream
 p.StartCamera()
 defer p.StopCamera()
@@ -240,24 +499,21 @@ for range ticker.C {
     }
     // Send frameBytes to WebSocket clients
 }
-Camera Methods
-// Get frame as bytes
-frameBytes, err := p.GetCameraFrameBytes()
+```
 
-// Get frame as base64 string
-frameBase64, err := p.GetCameraFrame()
+### Camera Methods
 
-// Get decoded image.Image
-img, err := p.GetCameraImage()
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `GetCameraFrameBytes()` | `[]byte, error` | Get frame as bytes |
+| `GetCameraFrame()` | `string, error` | Get frame as base64 string |
+| `GetCameraImage()` | `image.Image, error` | Get decoded image |
+| `SaveCameraFrame(path)` | `error` | Save to file |
+| `CameraIsAlive()` | `bool` | Check if stream is running |
 
-// Save to file
-err := p.SaveCameraFrame("/path/frame.jpg")
+### WebSocket Integration Pattern
 
-// Check camera status
-if p.CameraIsAlive() {
-    // Camera stream is running
-}
-WebSocket Integration Pattern
+```go
 func handleCameraStream(ws *websocket.Conn, p *printer.Printer) {
     p.StartCamera()
     defer p.StopCamera()
@@ -278,8 +534,15 @@ func handleCameraStream(ws *websocket.Conn, p *printer.Printer) {
         }
     }
 }
-Printer Control
-Temperature Control
+```
+
+---
+
+## Printer Control
+
+### Temperature Control
+
+```go
 // Set temperatures
 p.SetNozzleTemperature(220)           // °C
 p.SetBedTemperature(60)               // °C
@@ -292,7 +555,11 @@ p.SetBedTemperatureOverride(60, true)
 nozzleTemp := p.GetNozzleTemperature()   // float64
 bedTemp := p.GetBedTemperature()         // float64
 chamberTemp := p.GetChamberTemperature() // float64
-Fan Control
+```
+
+### Fan Control
+
+```go
 // Set fan speed (0-255)
 p.SetPartFanSpeedInt(255)    // Part cooling fan
 p.SetAuxFanSpeedInt(128)     // Auxiliary fan
@@ -305,18 +572,30 @@ p.SetPartFanSpeed(0.5)  // 50% speed
 partSpeed := p.GetPartFanSpeed()     // 0-255
 auxSpeed := p.GetAuxFanSpeed()       // 0-255
 chamberSpeed := p.GetChamberFanSpeed() // 0-255
-Light Control
+```
+
+### Light Control
+
+```go
 p.TurnLightOn()
 p.TurnLightOff()
 state := p.GetLightState()  // "on" or "off"
-Print Speed
+```
+
+### Print Speed
+
+```go
 // Set speed level (0-3)
 // 0 = Silent, 1 = Standard, 2 = Sport, 3 = Ludicrous
 p.SetPrintSpeed(1)
 
 // Get current speed
 speed := p.GetPrintSpeed()  // Percentage (e.g., 100)
-G-code Commands
+```
+
+### G-code Commands
+
+```go
 // Send single G-code command
 success, err := p.Gcode("G28", true)  // true = validate G-code
 
@@ -330,7 +609,11 @@ success, err := p.Gcode([]string{
 // Common commands
 p.HomePrinter()              // G28
 p.MoveZAxis(50)              // Move Z to 50mm
-Filament Control
+```
+
+### Filament Control
+
+```go
 // Load/unload filament
 p.LoadFilamentSpool()
 p.UnloadFilamentSpool()
@@ -343,21 +626,36 @@ p.SetFilamentPrinter(
     0,                  // AMS ID
     0,                  // Tray ID
 )
-Calibration
+```
+
+### Calibration
+
+```go
 // Run calibration
 p.CalibratePrinter(
     true,   // Bed leveling
     true,   // Motor noise calibration
     true,   // Vibration compensation
 )
-System
+```
+
+### System
+
+```go
 p.Reboot()  // Reboot printer
 
 // Firmware
 newFw := p.NewPrinterFirmware()  // Check for updates
 p.UpgradeFirmware(false)         // Upgrade (false = safety check)
-State & Telemetry
-Print Status
+```
+
+---
+
+## State & Telemetry
+
+### Print Status
+
+```go
 // Current state
 state := p.GetState()           // GcodeState enum
 printStatus := p.GetCurrentState() // PrintStatus enum
@@ -372,24 +670,42 @@ totalLayers := p.TotalLayerNum()
 fileName := p.GetFileName()
 subtaskName := p.SubtaskName()
 printType := p.PrintType()  // "cloud" or "local"
-State Enums
-// GcodeState
-states.GcodeStateIdle      // 0
-states.GcodeStateRunning   // 1
-states.GcodeStatePause     // 2
-states.GcodeStateStopped   // 3
+```
 
-// PrintStatus
-states.PrintStatusIdle      // -1 or 0
-states.PrintStatusRunning   // 1
-states.PrintStatusPause     // 2
-states.PrintStatusFinished  // 3
-AMS Status
+### GcodeState Enum
+
+| Value | String | Description |
+|-------|--------|-------------|
+| 0 | `IDLE` | Printer is idle |
+| 1 | `PREPARE` | Preparing to print |
+| 2 | `RUNNING` | Currently printing |
+| 3 | `PAUSE` | Print paused |
+| 4 | `FINISH` | Print finished |
+| 5 | `FAILED` | Print failed |
+
+### PrintStatus Enum (Selected)
+
+| Value | Constant | Description |
+|-------|----------|-------------|
+| -1 | `PrintStatusIdle` | Idle |
+| 0 | `PrintStatusPrinting` | Actively printing |
+| 1 | `PrintStatusAutoBedLeveling` | Leveling bed |
+| 2 | `PrintStatusHeatbedPreheating` | Preheating bed |
+| 3 | `PrintStatusSweepingNozzle` | Sweeping nozzle |
+| 4 | `PrintStatusChangingFilament` | Changing filament |
+| 5 | `PrintStatusCalibratingExtrusion` | Calibrating extrusion |
+| 16 | `PrintStatusUserPaused` | User paused |
+| 21 | `PrintStatusPrintSuccess` | Print success |
+| 255 | `PrintStatusIdle` | Idle (alternate) |
+
+### AMS Status
+
+```go
 amsHub := p.AMSHub()
 for amsID, ams := range amsHub.AMSHub {
     humidity := ams.Humidity      // %
     temp := ams.Temperature       // °C
-    
+
     for trayID, tray := range ams.FilamentTrays {
         filamentName := tray.TrayInfoIdx  // e.g., "GF PLA01"
         color := tray.TrayColor           // Hex color
@@ -398,9 +714,13 @@ for amsID, ams := range amsHub.AMSHub {
 
 // External spool (VT)
 vtTray := p.VTTray()
-Printer Info
+```
+
+### Printer Info
+
+```go
 // Nozzle
-nozzleType := p.NozzleType()       // enum
+nozzleType := p.NozzleType()       // enum (stainless_steel, hardened_steel)
 nozzleDiameter := p.NozzleDiameter() // mm (e.g., 0.4)
 
 // Network
@@ -408,8 +728,190 @@ wifiSignal := p.WifiSignal()  // dBm (e.g., "-45")
 
 // Firmware
 info := p.MQTTDump()  // Full raw data dump
-Error Handling
-Connection Errors
+```
+
+---
+
+## Busy State Detection
+
+The SDK provides hardware-accurate busy state detection, eliminating the need for arbitrary timeouts in your backend.
+
+### IsBusy() Method
+
+```go
+// Check if printer is busy
+if p.IsBusy() {
+    // Printer is performing a hardware task
+    // Do not send conflicting commands (homing, calibration, etc.)
+    return fmt.Errorf("printer is busy")
+}
+
+// Safe to send commands
+p.HomePrinter()
+```
+
+**Busy State Logic:**
+
+A printer is considered **busy** (cannot accept conflicting hardware commands) if:
+
+1. **GcodeState** is `RUNNING` or `PREPARE` (actively printing or preparing)
+2. **OR PrintStatus** indicates an explicit hardware task (not `IDLE`, not `UNKNOWN`, not `PRINTING`)
+
+This covers all hardware tasks including:
+- Bed leveling (`AUTO_BED_LEVELING`)
+- Heatbed preheating (`HEATBED_PREHEATING`)
+- Filament changes (`CHANGING_FILAMENT`, `FILAMENT_LOADING`, `FILAMENT_UNLOADING`)
+- Calibration tasks (`CALIBRATING_EXTRUSION`, `CALIBRATING_MICRO_LIDAR`, `CALIBRATING_MOTOR_NOISE`)
+- Homing (`HOMING_TOOLHEAD`)
+- Maintenance (`CLEANING_NOZZLE_TIP`, `SWEEPING_XY_MECH_MODE`)
+- Error states (all `PAUSED_*` states)
+
+### GetActivityDescription() Method
+
+```go
+// Get human-readable activity description
+activity := p.GetActivityDescription()
+fmt.Printf("Printer is: %s\n", activity)
+
+// Examples:
+// - "IDLE" - Printer is idle
+// - "RUNNING" - Actively printing
+// - "PREPARE" - Preparing to print
+// - "CALIBRATING_MICRO_LIDAR" - Calibrating micro lidar
+// - "HOMING_TOOLHEAD" - Homing toolhead
+// - "HEATBED_PREHEATING" - Preheating heatbed
+// - "AUTO_BED_LEVELING" - Auto bed leveling
+```
+
+**Return Values:**
+
+| Condition | Returns |
+|-----------|---------|
+| Printer not busy | `"IDLE"` |
+| GcodeState is RUNNING | `"RUNNING"` |
+| GcodeState is PREPARE | `"PREPARE"` |
+| Hardware task active | PrintStatus string (e.g., `"CALIBRATING_MICRO_LIDAR"`) |
+
+### Thread Safety
+
+Both methods are **thread-safe** and use the existing thread-safe getters `GetState()` and `GetCurrentState()`.
+
+### Example: Safe Command Queue
+
+```go
+// Safe command execution with busy check
+func executeSafeCommand(p *printer.Printer, cmd func() error) error {
+    if p.IsBusy() {
+        return fmt.Errorf("printer is busy: %s", p.GetActivityDescription())
+    }
+    
+    if err := cmd(); err != nil {
+        return err
+    }
+    
+    return nil
+}
+
+// Usage
+err := executeSafeCommand(p, func() error {
+    p.HomePrinter()
+    return nil
+})
+```
+
+### Example: Frontend Status Display
+
+```go
+// WebSocket handler with activity description
+func handlePrinterStatus(ws *websocket.Conn, p *printer.Printer) {
+    p.SetStateUpdateCallback(func() {
+        status := map[string]interface{}{
+            "is_busy":           p.IsBusy(),
+            "activity":          p.GetActivityDescription(),
+            "state":             p.GetState().String(),
+            "print_status":      p.GetCurrentState().String(),
+            "progress":          p.GetPercentage(),
+            "remaining_time":    p.GetTime(),
+        }
+        ws.WriteJSON(status)
+    })
+}
+```
+
+### State Mapping Reference
+
+| PrintStatus Constant | Value | Activity Description |
+|---------------------|-------|---------------------|
+| `PrintStatusIdle` | 255 | IDLE (not busy) |
+| `PrintStatusUnknown` | -1 | UNKNOWN (not busy) |
+| `PrintStatusPrinting` | 0 | PRINTING (handled by GcodeState) |
+| `PrintStatusAutoBedLeveling` | 1 | AUTO_BED_LEVELING |
+| `PrintStatusHeatbedPreheating` | 2 | HEATBED_PREHEATING |
+| `PrintStatusChangingFilament` | 4 | CHANGING_FILAMENT |
+| `PrintStatusCalibratingExtrusion` | 8 | CALIBRATING_EXTRUSION |
+| `PrintStatusCalibratingMicroLidar` | 12 | CALIBRATING_MICRO_LIDAR |
+| `PrintStatusHomingToolhead` | 13 | HOMING_TOOLHEAD |
+| `PrintStatusCleaningNozzleTip` | 14 | CLEANING_NOZZLE_TIP |
+| `PrintStatusFilamentLoading` | 24 | FILAMENT_LOADING |
+| `PrintStatusFilamentUnloading` | 22 | FILAMENT_UNLOADING |
+| `PrintStatusCalibratingMotorNoise` | 25 | CALIBRATING_MOTOR_NOISE |
+
+---
+
+## AMS Management
+
+### AMS Hub Structure
+
+```go
+type AMSHub struct {
+    AMSHub map[int]*AMS  // Key: AMS ID (0-3)
+}
+
+type AMS struct {
+    FilamentTrays map[int]*filament.FilamentTray  // Key: Tray ID (0-3)
+    Humidity      int
+    Temperature   float64
+}
+```
+
+### Accessing AMS Data
+
+```go
+amsHub := p.AMSHub()
+
+// Get first AMS unit
+ams := amsHub.Get(0)
+if ams != nil {
+    fmt.Printf("Humidity: %d%%\n", ams.Humidity)
+    fmt.Printf("Temperature: %.1f°C\n", ams.Temperature)
+    
+    // Get first tray
+    tray := ams.GetFilamentTray(0)
+    if tray != nil {
+        fmt.Printf("Filament: %s\n", tray.TrayType)
+        fmt.Printf("Color: %s\n", tray.TrayColor)
+        fmt.Printf("Min Temp: %d°C\n", tray.NozzleTempMin)
+        fmt.Printf("Max Temp: %d°C\n", tray.NozzleTempMax)
+    }
+}
+```
+
+### External Spool (VT Tray)
+
+```go
+vtTray := p.VTTray()
+if vtTray != nil {
+    fmt.Printf("External filament: %s\n", vtTray.TrayType)
+}
+```
+
+---
+
+## Error Handling
+
+### Connection Errors
+
+```go
 p := printer.NewPrinter(ip, code, serial)
 if err := p.Connect(); err != nil {
     // Common errors:
@@ -418,7 +920,11 @@ if err := p.Connect(); err != nil {
     // - "connection refused" - printer offline
     return err
 }
-Print Job Errors
+```
+
+### Print Job Errors
+
+```go
 _, err := p.SubmitPrintJob(fileData, "model.3mf", 1, true, []int{0}, true, "")
 if err != nil {
     // Common errors:
@@ -427,7 +933,11 @@ if err != nil {
     // - "file already exists" - filename collision
     return err
 }
-Camera Errors
+```
+
+### Camera Errors
+
+```go
 frameBytes, err := p.CaptureFrame()
 if err != nil {
     // Common errors:
@@ -436,7 +946,11 @@ if err != nil {
     // - "wrong access code or IP" - authentication failed
     return err
 }
-State Checks
+```
+
+### State Checks
+
+```go
 // Check printer state before operations
 state := p.GetState()
 if state == states.GcodeStateRunning {
@@ -448,8 +962,15 @@ if state == states.GcodeStateRunning {
 if !p.MQTTClientConnected() {
     return fmt.Errorf("not connected")
 }
-Complete Examples
-REST API Handler: Submit Print Job
+```
+
+---
+
+## Complete Examples
+
+### REST API Handler: Submit Print Job
+
+```go
 func handleSubmitPrint(w http.ResponseWriter, r *http.Request) {
     serial := r.URL.Query().Get("serial")
     p, err := pool.GetPrinter(serial)
@@ -494,7 +1015,11 @@ func handleSubmitPrint(w http.ResponseWriter, r *http.Request) {
         "status":        "print_job_submitted",
     })
 }
-WebSocket Handler: Real-Time Status
+```
+
+### WebSocket Handler: Real-Time Status
+
+```go
 func handlePrinterStatus(ws *websocket.Conn, serial string) {
     p, err := pool.GetPrinter(serial)
     if err != nil {
@@ -536,7 +1061,11 @@ func handlePrinterStatus(ws *websocket.Conn, serial string) {
         }
     }
 }
-WebSocket Handler: Camera Stream
+```
+
+### WebSocket Handler: Camera Stream
+
+```go
 func handleCameraStream(ws *websocket.Conn, serial string) {
     p, err := pool.GetPrinter(serial)
     if err != nil {
@@ -564,7 +1093,11 @@ func handleCameraStream(ws *websocket.Conn, serial string) {
         }
     }
 }
-Fleet Status Endpoint
+```
+
+### Fleet Status Endpoint
+
+```go
 func handleFleetStatus(w http.ResponseWriter, r *http.Request) {
     status := pool.GetStatus()
     infos := pool.GetAllPrinterInfo()
@@ -578,7 +1111,11 @@ func handleFleetStatus(w http.ResponseWriter, r *http.Request) {
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(response)
 }
-Graceful Shutdown
+```
+
+### Graceful Shutdown
+
+```go
 var (
     pool   *fleet.PrinterPool
     wg     sync.WaitGroup
@@ -604,21 +1141,114 @@ func main() {
     close(done)
     wg.Wait()
 }
-Architecture Notes
-Lazy Connections
-MQTT: Connected on Connect(), stays connected until Disconnect()
-FTP: Auto-connects on UploadFile(), auto-disconnects after operation
-Camera: Auto-starts on CaptureFrame(), auto-stops after frame captured
-Thread Safety
-Printer methods are thread-safe for concurrent reads
-Use mutex for shared state in your backend
-PrinterPool is fully thread-safe
-Performance
-State updates arrive via MQTT push (real-time)
-Use SetStateUpdateCallback() instead of polling
-Camera frames are ~50-100KB JPEGs
-FTP uploads are blocking - use goroutines for large files
-SDK Version: 1.0
-Last Updated: 2026-03-28
-Go Version: 1.21+
+```
 
+---
+
+## Troubleshooting
+
+### Connection Issues
+
+| Symptom | Possible Cause | Solution |
+|---------|---------------|----------|
+| `timeout waiting for MQTT connection` | Network/firewall blocking port 8883 | Check firewall rules, ensure printer is on same network |
+| `failed to login to FTP server` | Wrong access code | Verify 8-digit code from printer Settings > About |
+| `connection refused` | Printer offline | Check printer power and network connectivity |
+| `certificate unknown` | TLS certificate issue | SDK uses `InsecureSkipVerify: true` by default |
+
+### Camera Not Working
+
+| Symptom | Possible Cause | Solution |
+|---------|---------------|----------|
+| `timeout waiting for camera frame` | Camera busy or offline | Wait for printer to be idle, check camera enabled |
+| `no frame available` | Camera not started | Call `StartCamera()` before `GetCameraFrame*()` |
+| X1 series camera issues | Limited camera support | X1 series may have limited camera functionality |
+
+### FTP Upload Fails
+
+| Symptom | Possible Cause | Solution |
+|---------|---------------|----------|
+| `failed to upload file` | Printer not in safe state | Ensure printer is idle or paused |
+| `file already exists` | Filename collision | Use unique filenames (e.g., timestamp prefix) |
+| `no space left on device` | Printer storage full | Delete old files via `DeleteFile()` |
+
+### Print Job Issues
+
+| Symptom | Possible Cause | Solution |
+|---------|---------------|----------|
+| `failed to start print job` | MQTT publish failed | Check MQTT connection, verify file exists |
+| Print doesn't start | Wrong plate number | Ensure plate number (1-4) matches printer |
+| AMS not loading | Wrong slot mapping | Verify `amsMapping` matches loaded slots |
+
+### State Update Issues
+
+| Symptom | Possible Cause | Solution |
+|---------|---------------|----------|
+| Callbacks not firing | MQTT disconnected | Check `MQTTClientConnected()`, reconnect if needed |
+| Stale data | Printer offline | Reconnect or check network |
+
+---
+
+## Architecture Notes
+
+### Lazy Connections
+
+| Service | Connection Behavior |
+|---------|---------------------|
+| **MQTT** | Connected on `Connect()`, stays connected until `Disconnect()` |
+| **FTP** | Auto-connects on `UploadFile()`, auto-disconnects after operation |
+| **Camera** | Auto-starts on `CaptureFrame()`, auto-stops after frame captured |
+
+### Thread Safety
+
+- ✅ Printer methods are thread-safe for concurrent reads
+- ⚠️ Use mutex for shared state in your backend
+- ✅ PrinterPool is fully thread-safe (uses `sync.RWMutex`)
+
+### Performance
+
+| Metric | Typical Value |
+|--------|---------------|
+| State updates | Real-time via MQTT push |
+| Camera frames | ~50-100KB JPEGs at 2fps |
+| FTP uploads | Blocking operation |
+| MQTT latency | <100ms on local network |
+
+### Best Practices
+
+1. **Use callbacks instead of polling** - State updates arrive via MQTT push
+2. **Use goroutines for FTP uploads** - FTP operations are blocking
+3. **Reuse printer instances** - Don't create new instances for each operation
+4. **Handle reconnection gracefully** - Network issues can happen
+5. **Use PrinterPool for multiple printers** - Manages connections efficiently
+
+---
+
+## Supported Printer Models
+
+- **P1 Series**: P1S, P1P
+- **A1 Series**: A1, A1 Mini
+- **X1 Series**: X1C, X1E
+
+---
+
+## Dependencies
+
+```go
+github.com/eclipse/paho.mqtt.golang  // MQTT client
+github.com/jlaffaye/ftp              // FTP client
+golang.org/x/net                     // TLS support
+golang.org/x/sync                    // Concurrency utilities
+```
+
+---
+
+## License
+
+MIT License - See LICENSE file for details
+
+## Credits
+
+This Go implementation is inspired by the Python [bambulabs_api](https://github.com/BambuTools/bambulabs_api) project.
+
+Special thanks to the BambuTools community for reverse-engineering the Bambu Lab printer protocol.
