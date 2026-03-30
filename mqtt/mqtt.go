@@ -74,6 +74,9 @@ type PrinterMQTTClient struct {
 	// Command timeout for publish operations (default: 2 seconds)
 	commandTimeout time.Duration
 
+	// LastCommandSent tracks when the last command was sent (for data receipt correlation)
+	LastCommandSent time.Time
+
 	// TLS configuration
 	skipTLSVerify bool
 }
@@ -490,18 +493,18 @@ func (c *PrinterMQTTClient) publishCommand(payload map[string]interface{}) bool 
 		return false
 	}
 
-	token := c.client.Publish(c.commandTopic, 1, false, jsonData)
-	// Use WaitTimeout instead of Wait to avoid indefinite blocking
-	if token.WaitTimeout(c.commandTimeout) {
-		if err := token.Error(); err != nil {
-			errorLog.Printf("Command publish error: %v", err)
-			return false
-		}
-		return true
-	}
-	// Timeout occurred - command may not have been sent
-	warnLog.Printf("Command publish timeout (%v)", c.commandTimeout)
-	return false
+	// Record the timestamp before sending
+	c.mu.Lock()
+	c.LastCommandSent = time.Now()
+	c.mu.Unlock()
+
+	// Use QoS 0 (fire-and-forget) to avoid waiting for ACK
+	// The A1 Mini often doesn't send MQTT-level ACKs, but may still respond with data in the report topic
+	token := c.client.Publish(c.commandTopic, 0, false, jsonData)
+
+	// Return immediately after handing the packet to the network buffer
+	// Don't wait for MQTT-level ACK - data responses come via the report topic
+	return token.Error() == nil
 }
 
 // pushall forces a full state update from the printer.
