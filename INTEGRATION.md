@@ -1,39 +1,39 @@
-# BambuAPI-Go Integration Guide
+# BambuSDK-Go Integration Guide
 
 > **Comprehensive API reference and cheat sheet for integrating Bambu Lab 3D printers into Go applications**
 
-**SDK Version:** 1.1
+**SDK Version:** v1.0.4
 **Go Version:** 1.21+
-**Last Updated:** 2026-03-29
+**Last Updated:** 2026-04-09
 
 ---
 
-## What's New in v1.1
+## Features Overview
 
 ### Security Enhancements
 
 - **Configurable TLS Verification**: Enable certificate verification for production deployments
 - **FTP Path Sanitization**: All file paths are now sanitized to prevent path traversal attacks
 - **Input Validation**: AMS/tray ID validation (0-3 range) to prevent invalid commands
+- **G-code Validation**: Regex-based validation to prevent malformed commands
 
 ### Performance Improvements
 
-- **Streaming FTP Uploads**: Files are now streamed directly without buffering in memory
+- **Streaming FTP Uploads**: Files are streamed directly without buffering in memory
 - **Camera Memory Pool**: Reduced GC pressure with buffer pooling and 10MB max image size limit
 - **Configurable Command Timeout**: Adjustable MQTT command timeout (default: 5s)
-
-### New Features
-
 - **Context Support**: `UploadFileWithContext()` and `DownloadFileWithContext()` for cancellable operations
-- **MQTT Client Options**: `NewPrinterMQTTClientWithOptions()` for fine-grained configuration
-- **Recursive List Depth Limit**: Prevents stack overflow on deep directory structures (max: 10 levels)
 
-### Bug Fixes
+### Core Capabilities
 
-- **Connection Race Conditions**: Fixed break statement bugs in `Connect()` and `ConnectWithContext()`
-- **Goroutine Leaks**: Fixed camera and MQTT stop procedures with proper timeout handling
-- **Type Assertion Safety**: Fixed unsafe type assertions in `StartPrint3MF()`
-- **G-code Validation**: Fixed regex to properly handle negative numbers (e.g., `X-100.5`)
+- **MQTT Communication**: Real-time telemetry and commands (TLS:8883)
+- **Camera Streaming**: JPEG frame capture with lazy connection pattern (TLS:6000)
+- **FTP File Transfer**: Streaming uploads with path sanitization (TLS:990)
+- **Fleet Management**: Multi-printer pool with concurrent operations and broadcast
+- **AMS Support**: Full AMS hub monitoring (up to 4 units, 4 trays each)
+- **Busy State Detection**: Hardware-accurate detection using GcodeState + PrintStatus
+- **Health Checks**: Per-component monitoring (MQTT, FTP, Camera)
+- **CLI Tool**: 16+ commands for printer management
 
 ---
 
@@ -121,7 +121,6 @@ states.PrintStatusSweepingNozzle       // 3 - Sweeping
 states.PrintStatusChangingFilament     // 4 - Changing filament
 states.PrintStatusCalibratingExtrusion // 5 - Calibrating
 states.PrintStatusUserPaused           // 16 - User paused
-states.PrintStatusPrintSuccess         // 21 - Print success
 ```
 
 ---
@@ -185,9 +184,9 @@ states.PrintStatusPrintSuccess         // 21 - Print success
 
 ```go
 import (
-    "github.com/asfrm/bambuapi-go/printer"
-    "github.com/asfrm/bambuapi-go/fleet"
-    "github.com/asfrm/bambuapi-go/states"
+    "github.com/asfrm/bambusdk-go/printer"
+    "github.com/asfrm/bambusdk-go/fleet"
+    "github.com/asfrm/bambusdk-go/states"
 )
 ```
 
@@ -248,8 +247,8 @@ defer pool.DisconnectAll()
 ```go
 import (
     "time"
-    "github.com/asfrm/bambuapi-go/printer"
-    "github.com/asfrm/bambuapi-go/mqtt"
+    "github.com/asfrm/bambusdk-go/printer"
+    "github.com/asfrm/bambusdk-go/mqtt"
 )
 
 // Create printer instance
@@ -781,7 +780,6 @@ printType := p.PrintType()  // "cloud" or "local"
 
 | Value | Constant | Description |
 |-------|----------|-------------|
-| -1 | `PrintStatusIdle` | Idle |
 | 0 | `PrintStatusPrinting` | Actively printing |
 | 1 | `PrintStatusAutoBedLeveling` | Leveling bed |
 | 2 | `PrintStatusHeatbedPreheating` | Preheating bed |
@@ -789,8 +787,8 @@ printType := p.PrintType()  // "cloud" or "local"
 | 4 | `PrintStatusChangingFilament` | Changing filament |
 | 5 | `PrintStatusCalibratingExtrusion` | Calibrating extrusion |
 | 16 | `PrintStatusUserPaused` | User paused |
-| 21 | `PrintStatusPrintSuccess` | Print success |
-| 255 | `PrintStatusIdle` | Idle (alternate) |
+| 255 | `PrintStatusIdle` | Idle |
+| -1 | `PrintStatusUnknown` | Unknown state |
 
 ### AMS Status
 
@@ -1315,6 +1313,65 @@ func main() {
 3. **Reuse printer instances** - Don't create new instances for each operation
 4. **Handle reconnection gracefully** - Network issues can happen
 5. **Use PrinterPool for multiple printers** - Manages connections efficiently
+6. **Use context for cancellable operations** - Especially for large file uploads
+
+---
+
+## CLI Tool Reference
+
+The `bambu-cli` tool provides comprehensive command-line access to all printer functions.
+
+### Installation
+
+```bash
+go install github.com/asfrm/bambusdk-go/cmd/bambu-cli@latest
+```
+
+### Available Commands
+
+| Command | Description |
+|---------|-------------|
+| `status` | Get printer status (--json, --watch for continuous monitoring) |
+| `home` | Home all axes (G28) |
+| `temp` | Get/set temperatures (--nozzle, --bed) |
+| `light` | Turn light on/off |
+| `gcode` | Send raw G-code command |
+| `pause` / `resume` / `stop` | Print lifecycle control |
+| `fan` | Set fan speed (part/aux/chamber, 0-255) |
+| `speed` | Set print speed level (0-3) |
+| `calibrate` | Run calibration (--bed, --motor, --vibration) |
+| `filament` | Filament control (load/unload/retry) |
+| `ams` | Get AMS status and filament info |
+| `info` | Get printer info (firmware, nozzle, etc.) |
+| `firmware` | Check/upgrade firmware |
+| `reboot` | Reboot printer |
+| `camera` | Capture camera frames (-o output, -n count, -i interval) |
+| `print` | Upload and start print (3MF/G-code) |
+| `ftp-list` | List files on printer |
+
+### Configuration
+
+All commands support the following flags:
+- `-ip` or `BAMBU_IP`: Printer IP address
+- `-code` or `BAMBU_ACCESS_CODE`: Access code (8 digits)
+- `-serial` or `BAMBU_SERIAL`: Printer serial number
+- `-debug` or `BAMBU_DEBUG=1`: Enable debug logging
+
+### Example Usage
+
+```bash
+# Continuous monitoring
+bambu-cli status --watch -ip 192.168.1.200 -code ABC12345 -serial X1C-001
+
+# Start print with AMS
+bambu-cli print model.3mf -ip 192.168.1.200 -code ABC12345 -serial X1C-001
+
+# Capture 10 camera frames
+bambu-cli camera -o frame.jpg -n 10 -i 1000 -ip 192.168.1.200 -code ABC12345 -serial X1C-001
+
+# List all files on printer
+bambu-cli ftp-list -ip 192.168.1.200 -code ABC12345 -serial X1C-001
+```
 
 ---
 
@@ -1329,11 +1386,36 @@ func main() {
 ## Dependencies
 
 ```go
-github.com/eclipse/paho.mqtt.golang  // MQTT client
-github.com/jlaffaye/ftp              // FTP client
-golang.org/x/net                     // TLS support
-golang.org/x/sync                    // Concurrency utilities
+github.com/eclipse/paho.mqtt.golang v1.4.3  // MQTT client
+github.com/jlaffaye/ftp v0.2.0              // FTP client
+golang.org/x/net v0.17.0                    // TLS support
+golang.org/x/sync v0.1.0                    // Concurrency utilities
 ```
+
+---
+
+## CI/CD Pipeline
+
+This project uses GitHub Actions for continuous integration:
+
+- **Lint**: golangci-lint for code quality
+- **Build**: Cross-platform compilation
+- **Test**: Unit tests with coverage reporting
+- **Release**: Automated releases via GoReleaser
+
+Workflows trigger on:
+- Push to `main` and `dev` branches
+- Pull requests to `main`
+- Release tags
+
+---
+
+## Version History
+
+- **v1.0.4** - Current stable (March 2026)
+- **v1.0.3** - Feature additions (v1.1 milestone)
+- **v1.0.2** - Early development (v0.1.3 milestone)
+- **v1.0.1** - Initial project structure
 
 ---
 

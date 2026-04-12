@@ -3,9 +3,9 @@ package printer
 import (
 	"testing"
 
-	"github.com/asfrm/bambuapi-go/filament"
-	"github.com/asfrm/bambuapi-go/printerinfo"
-	"github.com/asfrm/bambuapi-go/states"
+	"github.com/asfrm/bambusdk-go/filament"
+	"github.com/asfrm/bambusdk-go/printerinfo"
+	"github.com/asfrm/bambusdk-go/states"
 )
 
 func TestNewPrinter(t *testing.T) {
@@ -89,7 +89,7 @@ func TestPrinterType(t *testing.T) {
 		{"P1S", printerinfo.PrinterTypeP1S},
 		{"P1P", printerinfo.PrinterTypeP1P},
 		{"X1C", printerinfo.PrinterTypeX1C},
-		{"INVALID", printerinfo.PrinterTypeP1S},
+		{"INVALID", printerinfo.PrinterTypeUnknown},
 	}
 
 	for _, tt := range tests {
@@ -140,7 +140,7 @@ func TestFilamentSettings(t *testing.T) {
 }
 
 func TestFilamentTrayFromDict(t *testing.T) {
-	dict := map[string]interface{}{
+	dict := map[string]any{
 		"k":               0.5,
 		"n":               1,
 		"tag_uid":         "TEST123",

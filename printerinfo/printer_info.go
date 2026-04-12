@@ -29,12 +29,13 @@ func ParseNozzleType(s string) NozzleType {
 type PrinterType string
 
 const (
-	PrinterTypeP1S    PrinterType = "P1S"
-	PrinterTypeP1P    PrinterType = "P1P"
-	PrinterTypeA1     PrinterType = "A1"
-	PrinterTypeA1Mini PrinterType = "A1_MINI"
-	PrinterTypeX1C    PrinterType = "X1C"
-	PrinterTypeX1E    PrinterType = "X1E"
+	PrinterTypeUnknown PrinterType = "UNKNOWN"
+	PrinterTypeP1S     PrinterType = "P1S"
+	PrinterTypeP1P     PrinterType = "P1P"
+	PrinterTypeA1      PrinterType = "A1"
+	PrinterTypeA1Mini  PrinterType = "A1_MINI"
+	PrinterTypeX1C     PrinterType = "X1C"
+	PrinterTypeX1E     PrinterType = "X1E"
 )
 
 func (p PrinterType) String() string {
@@ -57,7 +58,7 @@ func ParsePrinterType(s string) PrinterType {
 	case "X1E":
 		return PrinterTypeX1E
 	default:
-		return PrinterTypeP1S
+		return PrinterTypeUnknown
 	}
 }
 

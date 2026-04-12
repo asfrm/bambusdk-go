@@ -1,10 +1,15 @@
-`# bambuapi-go
+`# bambusdk-go
 
 Native Go implementation of the Bambu Lab 3D Printer API.
 
 > **Note:** This is a native Go implementation of the Bambu Lab printer API for controlling Bambu Lab 3D printers.
 
-## What's New in v1.1
+## Current Version: v1.0.4
+
+### Supported Printers
+- **P1 Series**: P1P, P1S
+- **A1 Series**: A1, A1 Mini
+- **X1 Series**: X1C, X1E
 
 ### Security
 - **Configurable TLS Verification** - Enable certificate verification for production use
@@ -23,19 +28,53 @@ Native Go implementation of the Bambu Lab 3D Printer API.
 
 ## Features
 
+- **CLI Tool**: Comprehensive command-line interface with 16+ commands
 - **MQTT Control**: Full control over printer via MQTT protocol
-- **Camera Stream**: Real-time camera frame retrieval
-- **FTP File Transfer**: Upload/download files to/from printer
+- **Camera Stream**: Real-time camera frame retrieval with memory pooling
+- **FTP File Transfer**: Streaming upload/download with context cancellation support
+- **Fleet Management**: Multi-printer pool with broadcast operations
 - **AMS Support**: Monitor and control AMS (Automated Material System)
 - **Temperature Control**: Bed and nozzle temperature management
 - **Fan Control**: Part, auxiliary, and chamber fan speed control
-- **Print Management**: Start, stop, pause, resume prints
-- **G-code Commands**: Send custom G-code commands
+- **Print Management**: Start, stop, pause, resume prints with full Bambu Studio compatibility
+- **G-code Commands**: Send custom G-code commands with validation
+- **Busy State Detection**: Hardware-accurate busy detection using GcodeState and PrintStatus
+- **Health Checks**: Per-component health monitoring (MQTT, FTP, Camera)
 
 ## Installation
 
 ```bash
-go get github.com/asfrm/bambuapi-go
+go get github.com/asfrm/bambusdk-go
+```
+
+### CLI Tool
+
+Install the CLI tool:
+
+```bash
+go install github.com/asfrm/bambusdk-go/cmd/bambu-cli@latest
+```
+
+Usage examples:
+
+```bash
+# Check printer status
+bambu-cli status -ip 192.168.1.200 -code YOUR_CODE -serial YOUR_SERIAL
+
+# Watch printer status continuously
+bambu-cli status --watch -ip 192.168.1.200 -code YOUR_CODE -serial YOUR_SERIAL
+
+# Capture camera frame
+bambu-cli camera -o frame.jpg -ip 192.168.1.200 -code YOUR_CODE -serial YOUR_SERIAL
+
+# Start a print job
+bambu-cli print model.3mf -ip 192.168.1.200 -code YOUR_CODE -serial YOUR_SERIAL
+
+# Get AMS status
+bambu-cli ams -ip 192.168.1.200 -code YOUR_CODE -serial YOUR_SERIAL
+
+# List files on printer
+bambu-cli ftp-list -ip 192.168.1.200 -code YOUR_CODE -serial YOUR_SERIAL
 ```
 
 ## Quick Start
@@ -47,7 +86,7 @@ import (
     "fmt"
     "time"
 
-    "github.com/asfrm/bambuapi-go/printer"
+    "github.com/asfrm/bambusdk-go/printer"
 )
 
 func main() {
@@ -84,8 +123,8 @@ package main
 
 import (
     "time"
-    "github.com/asfrm/bambuapi-go/printer"
-    "github.com/asfrm/bambuapi-go/mqtt"
+    "github.com/asfrm/bambusdk-go/printer"
+    "github.com/asfrm/bambusdk-go/mqtt"
 )
 
 func main() {
@@ -368,19 +407,23 @@ Detailed status including:
 ## Project Structure
 
 ```
-bambuapi-go/
-├── printer/          # Main printer client
-├── mqtt/             # MQTT communication
-├── camera/           # Camera stream
-├── ftp/              # FTP file transfer
-├── ams/              # AMS (Automated Material System)
-├── filament/         # Filament types and settings
-├── printerinfo/      # Printer information types
-├── states/           # Printer state types
-├── fleet/            # Multi-printer fleet management
+bambusdk-go/
+├── cmd/
+│   └── bambu-cli/      # CLI tool (16+ commands)
+├── printer/            # Main printer client
+├── mqtt/               # MQTT communication (TLS:8883)
+├── camera/             # Camera stream (TLS:6000)
+├── ftp/                # FTP file transfer (TLS:990)
+├── ams/                # AMS (Automated Material System)
+├── filament/           # Filament types and settings (50+ types)
+├── printerinfo/        # Printer information types
+├── states/             # Printer state types (GcodeState, PrintStatus)
+├── fleet/              # Multi-printer fleet management
 ├── internal/
-│   └── util/         # Type conversion utilities
-└── examples/         # Example applications
+│   └── util/           # Type conversion utilities
+├── examples/           # Example applications
+└── .github/
+    └── workflows/      # CI/CD pipeline
 ```
 
 ## License
@@ -392,3 +435,7 @@ MIT License - See LICENSE file for details
 This Go implementation is inspired by the Python [bambulabs_api](https://github.com/BambuTools/bambulabs_api) project.
 
 Special thanks to the BambuTools community for reverse-engineering the Bambu Lab printer protocol.
+
+## Repository
+
+GitHub: [github.com/asfrm/bambusdk-go](https://github.com/asfrm/bambusdk-go)

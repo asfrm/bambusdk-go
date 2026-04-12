@@ -1,4 +1,4 @@
-// Example application demonstrating the use of the bambuapi-go library.
+// Example application demonstrating the use of the bambusdk-go library.
 package main
 
 import (
@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/asfrm/bambuapi-go/printer"
+	"github.com/asfrm/bambusdk-go/printer"
 )
 
 func main() {
@@ -26,7 +26,7 @@ func main() {
 		accessCode = "12347890"
 	}
 
-	fmt.Println("Starting bambuapi-go example")
+	fmt.Println("Starting bambusdk-go example")
 	fmt.Println("Connecting to BambuLab 3D printer")
 	fmt.Printf("IP: %s\n", ipAddress)
 	fmt.Printf("Serial: %s\n", serial)
@@ -84,12 +84,16 @@ func main() {
 
 	// Turn light off
 	fmt.Println("Turning light off...")
-	p.TurnLightOff()
+	if err := p.TurnLightOff(); err != nil {
+		fmt.Printf("Failed to turn light off: %v\n", err)
+	}
 	time.Sleep(2 * time.Second)
 
 	// Turn light on
 	fmt.Println("Turning light on...")
-	p.TurnLightOn()
+	if err := p.TurnLightOn(); err != nil {
+		fmt.Printf("Failed to turn light on: %v\n", err)
+	}
 
 	// Get nozzle info
 	nozzleType := p.NozzleType()
@@ -109,7 +113,7 @@ func main() {
 	amsHub := p.AMSHub()
 	if amsHub != nil {
 		fmt.Println("AMS Hub available")
-		for i := 0; i < 4; i++ {
+		for i := range 4 {
 			ams := amsHub.Get(i)
 			if ams != nil {
 				fmt.Printf("AMS %d: Humidity=%d%%, Temperature=%.1f°C\n", i, ams.Humidity, ams.Temperature)

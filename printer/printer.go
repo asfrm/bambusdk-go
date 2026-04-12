@@ -14,13 +14,22 @@ import (
 	"sync"
 	"time"
 
-	"github.com/asfrm/bambuapi-go/ams"
-	"github.com/asfrm/bambuapi-go/camera"
-	"github.com/asfrm/bambuapi-go/filament"
-	"github.com/asfrm/bambuapi-go/ftp"
-	"github.com/asfrm/bambuapi-go/mqtt"
-	"github.com/asfrm/bambuapi-go/printerinfo"
-	"github.com/asfrm/bambuapi-go/states"
+	"github.com/asfrm/bambusdk-go/ams"
+	"github.com/asfrm/bambusdk-go/camera"
+	"github.com/asfrm/bambusdk-go/filament"
+	"github.com/asfrm/bambusdk-go/ftp"
+	"github.com/asfrm/bambusdk-go/mqtt"
+	"github.com/asfrm/bambusdk-go/printerinfo"
+	"github.com/asfrm/bambusdk-go/sdk"
+	"github.com/asfrm/bambusdk-go/states"
+)
+
+// Compile-time interface assertions
+var (
+	_ sdk.Printer         = (*Printer)(nil)
+	_ mqtt.MQTTClient     = (*mqtt.PrinterMQTTClient)(nil)
+	_ ftp.FTPClient       = (*ftp.PrinterFTPClient)(nil)
+	_ camera.CameraClient = (*camera.PrinterCamera)(nil)
 )
 
 // ConnectionState represents the connection state of a printer
@@ -80,7 +89,7 @@ type Printer struct {
 	// Connection state tracking
 	stateMu          sync.RWMutex
 	lastHealthCheck  time.Time
-	lastHealthStatus *HealthStatus
+	lastHealthStatus *sdk.HealthStatus
 }
 
 // NewPrinter creates a new Printer instance.
@@ -143,7 +152,7 @@ connectionLoop:
 			return nil
 		case <-dataTicker.C:
 			dump := p.MQTTClient.Dump()
-			if printData, ok := dump["print"].(map[string]interface{}); ok {
+			if printData, ok := dump["print"].(map[string]any); ok {
 				// Check for key fields that indicate full state
 				if _, hasBed := printData["bed_temper"]; hasBed {
 					if _, hasAms := printData["ams"]; hasAms {
@@ -230,7 +239,7 @@ connectionLoop:
 			return nil
 		case <-dataTicker.C:
 			dump := p.MQTTClient.Dump()
-			if printData, ok := dump["print"].(map[string]interface{}); ok {
+			if printData, ok := dump["print"].(map[string]any); ok {
 				// Check for key fields that indicate full state
 				if _, hasBed := printData["bed_temper"]; hasBed {
 					if _, hasAms := printData["ams"]; hasAms {
@@ -297,34 +306,34 @@ func (p *Printer) Ping(ctx context.Context) error {
 }
 
 // GetConnectionState returns the current connection state of the printer
-func (p *Printer) GetConnectionState() ConnectionState {
+func (p *Printer) GetConnectionState() sdk.ConnectionState {
 	if !p.MQTTClient.IsConnected() {
-		return StateDisconnected
+		return sdk.StateDisconnected
 	}
 	if !p.MQTTClient.Ready() {
-		return StateConnecting
+		return sdk.StateConnecting
 	}
-	return StateConnected
+	return sdk.StateConnected
 }
 
 // GetHealthStatus returns cached health status of all printer components
-func (p *Printer) GetHealthStatus() *HealthStatus {
+func (p *Printer) GetHealthStatus() *sdk.HealthStatus {
 	p.stateMu.RLock()
 	defer p.stateMu.RUnlock()
 
 	if p.lastHealthStatus == nil {
 		// Return current state if no health check has been performed
-		return &HealthStatus{
+		return &sdk.HealthStatus{
 			Timestamp: time.Now(),
-			MQTT: ComponentHealth{
+			MQTT: sdk.ComponentHealth{
 				Connected: p.MQTTClient.IsConnected(),
 				LastCheck: time.Now(),
 			},
-			FTP: ComponentHealth{
+			FTP: sdk.ComponentHealth{
 				Connected: p.FTPClient != nil,
 				LastCheck: time.Now(),
 			},
-			Camera: ComponentHealth{
+			Camera: sdk.ComponentHealth{
 				Connected: p.CameraClient.IsAlive(),
 				LastCheck: time.Now(),
 			},
@@ -337,7 +346,7 @@ func (p *Printer) GetHealthStatus() *HealthStatus {
 }
 
 // updateHealthStatus updates the cached health status
-func (p *Printer) updateHealthStatus(status *HealthStatus) {
+func (p *Printer) updateHealthStatus(status *sdk.HealthStatus) {
 	p.stateMu.Lock()
 	defer p.stateMu.Unlock()
 	p.lastHealthStatus = status
@@ -345,28 +354,35 @@ func (p *Printer) updateHealthStatus(status *HealthStatus) {
 }
 
 // PerformHealthCheck performs a comprehensive health check on all components
+// PerformHealthCheck performs a health check on all printer components
 // and caches the result. Use GetHealthStatus() to retrieve cached results.
-func (p *Printer) PerformHealthCheck(ctx context.Context) *HealthStatus {
-	status := &HealthStatus{
+func (p *Printer) PerformHealthCheck(ctx context.Context) *sdk.HealthStatus {
+	status := &sdk.HealthStatus{
 		Timestamp: time.Now(),
 	}
 
 	// Check MQTT
 	mqttStart := time.Now()
-	status.MQTT.Connected = p.MQTTClient.IsConnected()
-	status.MQTT.Latency = time.Since(mqttStart)
-	status.MQTT.LastCheck = time.Now()
+	status.MQTT = sdk.ComponentHealth{
+		Connected: p.MQTTClient.IsConnected(),
+		Latency:   time.Since(mqttStart),
+		LastCheck: time.Now(),
+	}
 	if !status.MQTT.Connected {
 		status.MQTT.LastError = "not connected"
 	}
 
 	// Check FTP (lightweight check - just verify client exists)
-	status.FTP.Connected = p.FTPClient != nil
-	status.FTP.LastCheck = time.Now()
+	status.FTP = sdk.ComponentHealth{
+		Connected: p.FTPClient != nil,
+		LastCheck: time.Now(),
+	}
 
 	// Check Camera
-	status.Camera.Connected = p.CameraClient.IsAlive()
-	status.Camera.LastCheck = time.Now()
+	status.Camera = sdk.ComponentHealth{
+		Connected: p.CameraClient.IsAlive(),
+		LastCheck: time.Now(),
+	}
 	if !status.Camera.Connected {
 		status.Camera.LastError = "camera not running"
 	}
@@ -383,9 +399,18 @@ func (p *Printer) SetMQTTAggressiveMode(enabled bool) {
 	p.MQTTClient.SetPushallAggressive(enabled)
 }
 
+// boolToError converts a boolean return value to an error.
+// Returns nil if success (true), or a generic error if failure (false).
+func boolToError(success bool) error {
+	if !success {
+		return fmt.Errorf("operation failed")
+	}
+	return nil
+}
+
 // RequestFullState requests a full state update from the printer.
-func (p *Printer) RequestFullState() bool {
-	return p.MQTTClient.RequestFullState()
+func (p *Printer) RequestFullState() error {
+	return boolToError(p.MQTTClient.RequestFullState())
 }
 
 // CurrentLayerNum gets the current layer number.
@@ -399,8 +424,11 @@ func (p *Printer) TotalLayerNum() int {
 }
 
 // CameraStart starts the camera client.
-func (p *Printer) CameraStart() bool {
-	return p.CameraClient.Start()
+func (p *Printer) CameraStart() error {
+	if !p.CameraClient.Start() {
+		return fmt.Errorf("failed to start camera")
+	}
+	return nil
 }
 
 // MQTTStart starts the MQTT client.
@@ -424,7 +452,7 @@ func (p *Printer) GetTime() int {
 }
 
 // MQTTDump gets the full MQTT data dump.
-func (p *Printer) MQTTDump() map[string]interface{} {
+func (p *Printer) MQTTDump() map[string]any {
 	return p.MQTTClient.Dump()
 }
 
@@ -479,28 +507,28 @@ func (p *Printer) GetLightState() string {
 }
 
 // TurnLightOn turns on the printer light.
-func (p *Printer) TurnLightOn() bool {
-	return p.MQTTClient.TurnLightOn()
+func (p *Printer) TurnLightOn() error {
+	return boolToError(p.MQTTClient.TurnLightOn())
 }
 
 // TurnLightOff turns off the printer light.
-func (p *Printer) TurnLightOff() bool {
-	return p.MQTTClient.TurnLightOff()
+func (p *Printer) TurnLightOff() error {
+	return boolToError(p.MQTTClient.TurnLightOff())
 }
 
 // Gcode sends G-code command(s) to the printer.
-func (p *Printer) Gcode(gcode interface{}, gcodeCheck bool) (bool, error) {
+func (p *Printer) Gcode(gcode any, gcodeCheck bool) (bool, error) {
 	return p.MQTTClient.SendGcode(gcode, gcodeCheck)
 }
 
 // StartPrint starts printing a file already uploaded to the printer.
-func (p *Printer) StartPrint(filename string, plateNumber interface{}, useAMS bool, amsMapping []int, skipObjects []int, flowCalibration bool) bool {
-	return p.MQTTClient.StartPrint3MF(filename, plateNumber, useAMS, amsMapping, skipObjects, flowCalibration, "")
+func (p *Printer) StartPrint(filename string, plateNumber any, useAMS bool, amsMapping []int, skipObjects []int, flowCalibration bool) error {
+	return boolToError(p.MQTTClient.StartPrint3MF(filename, plateNumber, useAMS, amsMapping, skipObjects, flowCalibration, ""))
 }
 
 // StartPrintWithBedType starts printing a file with a specific bed type.
-func (p *Printer) StartPrintWithBedType(filename string, plateNumber interface{}, useAMS bool, amsMapping []int, skipObjects []int, flowCalibration bool, bedType string) bool {
-	return p.MQTTClient.StartPrint3MF(filename, plateNumber, useAMS, amsMapping, skipObjects, flowCalibration, bedType)
+func (p *Printer) StartPrintWithBedType(filename string, plateNumber any, useAMS bool, amsMapping []int, skipObjects []int, flowCalibration bool, bedType string) error {
+	return boolToError(p.MQTTClient.StartPrint3MF(filename, plateNumber, useAMS, amsMapping, skipObjects, flowCalibration, bedType))
 }
 
 // SubmitPrintJob is the high-level method to upload a 3MF/Gcode file and start printing.
@@ -520,7 +548,7 @@ func (p *Printer) StartPrintWithBedType(filename string, plateNumber interface{}
 //   - bedType: Bed type (e.g., "textured_plate", "smooth_plate", "" for default)
 //
 // Returns the uploaded filename on success, or an error on failure.
-func (p *Printer) SubmitPrintJob(fileData io.Reader, filename string, plateNumber interface{}, useAMS bool, amsMapping []int, flowCalibration bool, bedType string) (string, error) {
+func (p *Printer) SubmitPrintJob(fileData io.Reader, filename string, plateNumber any, useAMS bool, amsMapping []int, flowCalibration bool, bedType string) (string, error) {
 	// Step 1: Upload file via FTP (lazy connection - auto-connects and disconnects)
 	uploadedPath, err := p.UploadFile(fileData, filename)
 	if err != nil {
@@ -538,12 +566,12 @@ func (p *Printer) SubmitPrintJob(fileData io.Reader, filename string, plateNumbe
 
 // SubmitPrintJobFromFile is a convenience method that reads a file from disk and submits it for printing.
 // See SubmitPrintJob for parameter details.
-func (p *Printer) SubmitPrintJobFromFile(localPath string, plateNumber interface{}, useAMS bool, amsMapping []int, flowCalibration bool, bedType string) (string, error) {
+func (p *Printer) SubmitPrintJobFromFile(localPath string, plateNumber any, useAMS bool, amsMapping []int, flowCalibration bool, bedType string) (string, error) {
 	file, err := os.Open(localPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to open file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Use only the base filename to avoid exposing local directory structure
 	filename := fmt.Sprintf("%d_%s", time.Now().Unix(), filepath.Base(localPath))
@@ -551,96 +579,96 @@ func (p *Printer) SubmitPrintJobFromFile(localPath string, plateNumber interface
 }
 
 // StopPrint stops the current print.
-func (p *Printer) StopPrint() bool {
-	return p.MQTTClient.StopPrint()
+func (p *Printer) StopPrint() error {
+	return boolToError(p.MQTTClient.StopPrint())
 }
 
 // PausePrint pauses the current print.
-func (p *Printer) PausePrint() bool {
-	return p.MQTTClient.PausePrint()
+func (p *Printer) PausePrint() error {
+	return boolToError(p.MQTTClient.PausePrint())
 }
 
 // ResumePrint resumes a paused print.
-func (p *Printer) ResumePrint() bool {
-	return p.MQTTClient.ResumePrint()
+func (p *Printer) ResumePrint() error {
+	return boolToError(p.MQTTClient.ResumePrint())
 }
 
 // SetBedTemperature sets the bed temperature.
-func (p *Printer) SetBedTemperature(temperature int) bool {
-	return p.MQTTClient.SetBedTemperature(temperature, false)
+func (p *Printer) SetBedTemperature(temperature int) error {
+	return boolToError(p.MQTTClient.SetBedTemperature(temperature, false))
 }
 
 // SetBedTemperatureOverride sets the bed temperature with override option.
-func (p *Printer) SetBedTemperatureOverride(temperature int, override bool) bool {
-	return p.MQTTClient.SetBedTemperature(temperature, override)
+func (p *Printer) SetBedTemperatureOverride(temperature int, override bool) error {
+	return boolToError(p.MQTTClient.SetBedTemperature(temperature, override))
 }
 
 // HomePrinter homes the printer.
-func (p *Printer) HomePrinter() bool {
-	return p.MQTTClient.AutoHome()
+func (p *Printer) HomePrinter() error {
+	return boolToError(p.MQTTClient.AutoHome())
 }
 
 // MoveZAxis moves the Z-axis to a specific height.
-func (p *Printer) MoveZAxis(height int) bool {
-	return p.MQTTClient.SetBedHeight(height)
+func (p *Printer) MoveZAxis(height int) error {
+	return boolToError(p.MQTTClient.SetBedHeight(height))
 }
 
 // SetFilamentPrinter sets the printer filament settings.
-func (p *Printer) SetFilamentPrinter(color string, f interface{}, amsID, trayID int) bool {
+func (p *Printer) SetFilamentPrinter(color string, f any, amsID, trayID int) error {
 	var settings filament.AMSFilamentSettings
 
 	switch fil := f.(type) {
 	case string:
 		filamentType, err := filament.FilamentByName(fil)
 		if err != nil {
-			return false
+			return fmt.Errorf("invalid filament type: %w", err)
 		}
 		settings = filamentType.GetSettings()
 	case filament.AMSFilamentSettings:
 		settings = fil
 	default:
-		return false
+		return fmt.Errorf("invalid filament type: %v", f)
 	}
 
-	return p.MQTTClient.SetPrinterFilament(settings, color, amsID, trayID)
+	return boolToError(p.MQTTClient.SetPrinterFilament(settings, color, amsID, trayID))
 }
 
 // SetNozzleTemperature sets the nozzle temperature.
-func (p *Printer) SetNozzleTemperature(temperature int) bool {
-	return p.MQTTClient.SetNozzleTemperature(temperature, false)
+func (p *Printer) SetNozzleTemperature(temperature int) error {
+	return boolToError(p.MQTTClient.SetNozzleTemperature(temperature, false))
 }
 
 // SetNozzleTemperatureOverride sets the nozzle temperature with override option.
-func (p *Printer) SetNozzleTemperatureOverride(temperature int, override bool) bool {
-	return p.MQTTClient.SetNozzleTemperature(temperature, override)
+func (p *Printer) SetNozzleTemperatureOverride(temperature int, override bool) error {
+	return boolToError(p.MQTTClient.SetNozzleTemperature(temperature, override))
 }
 
 // SetPrintSpeed sets the print speed level (0-3).
-func (p *Printer) SetPrintSpeed(speedLevel int) bool {
+func (p *Printer) SetPrintSpeed(speedLevel int) error {
 	if speedLevel < 0 || speedLevel > 3 {
-		return false
+		return fmt.Errorf("invalid speed level: %d (must be 0-3)", speedLevel)
 	}
-	return p.MQTTClient.SetPrintSpeedLevel(speedLevel)
+	return boolToError(p.MQTTClient.SetPrintSpeedLevel(speedLevel))
 }
 
 // CalibratePrinter starts printer calibration.
-func (p *Printer) CalibratePrinter(bedLevel, motorNoiseCalibration, vibrationCompensation bool) bool {
-	return p.MQTTClient.Calibration(bedLevel, motorNoiseCalibration, vibrationCompensation)
+func (p *Printer) CalibratePrinter(bedLevel, motorNoiseCalibration, vibrationCompensation bool) error {
+	return boolToError(p.MQTTClient.Calibration(bedLevel, motorNoiseCalibration, vibrationCompensation))
 }
 
 // LoadFilamentSpool loads filament from the spool.
-func (p *Printer) LoadFilamentSpool() bool {
-	return p.MQTTClient.LoadFilamentSpool()
+func (p *Printer) LoadFilamentSpool() error {
+	return boolToError(p.MQTTClient.LoadFilamentSpool())
 }
 
 // UnloadFilamentSpool unloads filament from the spool.
-func (p *Printer) UnloadFilamentSpool() bool {
-	return p.MQTTClient.UnloadFilamentSpool()
+func (p *Printer) UnloadFilamentSpool() error {
+	return boolToError(p.MQTTClient.UnloadFilamentSpool())
 }
 
 // RetryFilamentAction retries the filament action.
-func (p *Printer) RetryFilamentAction() bool {
-	return p.MQTTClient.ResumeFilamentAction()
+func (p *Printer) RetryFilamentAction() error {
+	return boolToError(p.MQTTClient.ResumeFilamentAction())
 }
 
 // GetCurrentState gets the current printer status.
@@ -708,44 +736,44 @@ func (p *Printer) GetSkippedObjects() []int {
 	return p.MQTTClient.GetSkippedObjects()
 }
 
-// SkipObjects skips objects during printing.
-func (p *Printer) SkipObjects(objList []int) bool {
-	return p.MQTTClient.SkipObjects(objList)
+// SkipObjectsskips objects during printing.
+func (p *Printer) SkipObjects(objList []int) error {
+	return boolToError(p.MQTTClient.SkipObjects(objList))
 }
 
 // SetPartFanSpeed sets the part fan speed (0-255 or 0.0-1.0).
-func (p *Printer) SetPartFanSpeed(speed interface{}) (bool, error) {
+func (p *Printer) SetPartFanSpeed(speed any) (bool, error) {
 	return p.MQTTClient.SetPartFanSpeed(speed)
 }
 
 // SetPartFanSpeedInt sets the part fan speed (0-255).
-func (p *Printer) SetPartFanSpeedInt(speed int) bool {
-	return p.MQTTClient.SetPartFanSpeedInt(speed)
+func (p *Printer) SetPartFanSpeedInt(speed int) error {
+	return boolToError(p.MQTTClient.SetPartFanSpeedInt(speed))
 }
 
 // SetAuxFanSpeed sets the auxiliary fan speed (0-255 or 0.0-1.0).
-func (p *Printer) SetAuxFanSpeed(speed interface{}) (bool, error) {
+func (p *Printer) SetAuxFanSpeed(speed any) (bool, error) {
 	return p.MQTTClient.SetAuxFanSpeed(speed)
 }
 
 // SetAuxFanSpeedInt sets the aux fan speed (0-255).
-func (p *Printer) SetAuxFanSpeedInt(speed int) bool {
-	return p.MQTTClient.SetAuxFanSpeedInt(speed)
+func (p *Printer) SetAuxFanSpeedInt(speed int) error {
+	return boolToError(p.MQTTClient.SetAuxFanSpeedInt(speed))
 }
 
 // SetChamberFanSpeed sets the chamber fan speed (0-255 or 0.0-1.0).
-func (p *Printer) SetChamberFanSpeed(speed interface{}) (bool, error) {
+func (p *Printer) SetChamberFanSpeed(speed any) (bool, error) {
 	return p.MQTTClient.SetChamberFanSpeed(speed)
 }
 
 // SetChamberFanSpeedInt sets the chamber fan speed (0-255).
-func (p *Printer) SetChamberFanSpeedInt(speed int) bool {
-	return p.MQTTClient.SetChamberFanSpeedInt(speed)
+func (p *Printer) SetChamberFanSpeedInt(speed int) error {
+	return boolToError(p.MQTTClient.SetChamberFanSpeedInt(speed))
 }
 
 // SetAutoStepRecovery sets auto step recovery.
-func (p *Printer) SetAutoStepRecovery(autoStepRecovery bool) bool {
-	return p.MQTTClient.SetAutoStepRecovery(autoStepRecovery)
+func (p *Printer) SetAutoStepRecovery(autoStepRecovery bool) error {
+	return boolToError(p.MQTTClient.SetAutoStepRecovery(autoStepRecovery))
 }
 
 // VTTray gets the external spool filament tray.
@@ -785,18 +813,18 @@ func (p *Printer) WifiSignal() string {
 }
 
 // Reboot reboots the printer.
-func (p *Printer) Reboot() bool {
-	return p.MQTTClient.Reboot()
+func (p *Printer) Reboot() error {
+	return boolToError(p.MQTTClient.Reboot())
 }
 
 // SetOnboardPrinterTimelapse enables/disables onboard timelapse.
-func (p *Printer) SetOnboardPrinterTimelapse(enable bool) bool {
-	return p.MQTTClient.SetOnboardPrinterTimelapse(enable)
+func (p *Printer) SetOnboardPrinterTimelapse(enable bool) error {
+	return boolToError(p.MQTTClient.SetOnboardPrinterTimelapse(enable))
 }
 
 // SetNozzleInfo sets the nozzle information.
-func (p *Printer) SetNozzleInfo(nozzleType printerinfo.NozzleType, nozzleDiameter float64) bool {
-	return p.MQTTClient.SetNozzleInfo(nozzleType, nozzleDiameter)
+func (p *Printer) SetNozzleInfo(nozzleType printerinfo.NozzleType, nozzleDiameter float64) error {
+	return boolToError(p.MQTTClient.SetNozzleInfo(nozzleType, nozzleDiameter))
 }
 
 // NewPrinterFirmware checks if new firmware is available.
@@ -805,13 +833,13 @@ func (p *Printer) NewPrinterFirmware() string {
 }
 
 // UpgradeFirmware upgrades to the latest firmware.
-func (p *Printer) UpgradeFirmware(override bool) bool {
-	return p.MQTTClient.UpgradeFirmware(override)
+func (p *Printer) UpgradeFirmware(override bool) error {
+	return boolToError(p.MQTTClient.UpgradeFirmware(override))
 }
 
 // DowngradeFirmware downgrades to a specific firmware version.
-func (p *Printer) DowngradeFirmware(firmwareVersion string) bool {
-	return p.MQTTClient.DowngradeFirmware(firmwareVersion)
+func (p *Printer) DowngradeFirmware(firmwareVersion string) error {
+	return boolToError(p.MQTTClient.DowngradeFirmware(firmwareVersion))
 }
 
 // GetAccessCode gets the access code.
@@ -825,7 +853,7 @@ func (p *Printer) RequestAccessCode() bool {
 }
 
 // GetFirmwareHistory gets the firmware history.
-func (p *Printer) GetFirmwareHistory() []map[string]interface{} {
+func (p *Printer) GetFirmwareHistory() []map[string]any {
 	return p.MQTTClient.GetFirmwareHistory()
 }
 
@@ -861,7 +889,7 @@ func (p *Printer) withFTP(fn func(*ftp.PrinterFTPClient) error) error {
 	if err := p.FTPClient.Reconnect(); err != nil {
 		return fmt.Errorf("failed to connect to FTP: %w", err)
 	}
-	defer p.FTPClient.Close() // Auto-disconnect after operation
+	defer func() { _ = p.FTPClient.Close() }() // Auto-disconnect after operation
 
 	return fn(p.FTPClient)
 }
@@ -883,7 +911,7 @@ func (p *Printer) UploadFileFromPath(localPath, remoteFilename string) (string, 
 	if err != nil {
 		return "", fmt.Errorf("failed to open file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	return p.UploadFile(file, remoteFilename)
 }
 
@@ -904,7 +932,7 @@ func (p *Printer) DownloadFileToPath(remotePath, localPath string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(localPath, data, 0644)
+	return os.WriteFile(localPath, data, 0600)
 }
 
 // DeleteFile deletes a file from the printer via FTP (auto-connects/disconnects).
@@ -1045,7 +1073,7 @@ func (p *Printer) SaveCameraFrame(filePath string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filePath, frameBytes, 0644)
+	return os.WriteFile(filePath, frameBytes, 0600)
 }
 
 // CaptureFrame captures a single frame and returns it (convenience method).
@@ -1068,4 +1096,29 @@ func (p *Printer) CaptureFrameWithTimeout(timeout time.Duration) ([]byte, error)
 
 	// Wait for first frame with custom timeout
 	return p.CameraClient.WaitForFrame(timeout)
+}
+
+// GetIPAddress returns the printer's IP address.
+func (p *Printer) GetIPAddress() string {
+	return p.IPAddress
+}
+
+// GetSerial returns the printer's serial number.
+func (p *Printer) GetSerial() string {
+	return p.Serial
+}
+
+// GetMQTTClient returns the MQTT client as an interface for testability.
+func (p *Printer) GetMQTTClient() mqtt.MQTTClient {
+	return p.MQTTClient
+}
+
+// GetFTPClient returns the FTP client as an interface for testability.
+func (p *Printer) GetFTPClient() ftp.FTPClient {
+	return p.FTPClient
+}
+
+// GetCameraClient returns the camera client as an interface for testability.
+func (p *Printer) GetCameraClient() camera.CameraClient {
+	return p.CameraClient
 }

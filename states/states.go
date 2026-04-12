@@ -166,7 +166,7 @@ func ParseGcodeState(s string) GcodeState {
 }
 
 // ParsePrintStatus parses an interface{} into a PrintStatus.
-func ParsePrintStatus(v interface{}) PrintStatus {
+func ParsePrintStatus(v any) PrintStatus {
 	switch val := v.(type) {
 	case int:
 		return PrintStatus(val)
@@ -174,7 +174,9 @@ func ParsePrintStatus(v interface{}) PrintStatus {
 		return PrintStatus(int(val))
 	case string:
 		var status int
-		fmt.Sscanf(val, "%d", &status)
+		if _, err := fmt.Sscanf(val, "%d", &status); err != nil {
+			return PrintStatusUnknown
+		}
 		return PrintStatus(status)
 	default:
 		return PrintStatusUnknown

@@ -9,7 +9,7 @@ import (
 
 // ToInt converts an interface{} to int with a default value.
 // It handles int, int64, float64, string, and json.Number types.
-func ToInt(val interface{}, defaultValue int) int {
+func ToInt(val any, defaultValue int) int {
 	switch v := val.(type) {
 	case int:
 		return v
@@ -32,7 +32,7 @@ func ToInt(val interface{}, defaultValue int) int {
 }
 
 // ToInt64 converts an interface{} to int64 with a default value.
-func ToInt64(val interface{}, defaultValue int64) int64 {
+func ToInt64(val any, defaultValue int64) int64 {
 	switch v := val.(type) {
 	case int64:
 		return v
@@ -55,7 +55,7 @@ func ToInt64(val interface{}, defaultValue int64) int64 {
 }
 
 // ToFloat64 converts an interface{} to float64 with a default value.
-func ToFloat64(val interface{}, defaultValue float64) float64 {
+func ToFloat64(val any, defaultValue float64) float64 {
 	switch v := val.(type) {
 	case float64:
 		return v
@@ -80,7 +80,7 @@ func ToFloat64(val interface{}, defaultValue float64) float64 {
 }
 
 // ToString converts an interface{} to string with a default value.
-func ToString(val interface{}, defaultValue string) string {
+func ToString(val any, defaultValue string) string {
 	switch v := val.(type) {
 	case string:
 		return v
@@ -92,7 +92,7 @@ func ToString(val interface{}, defaultValue string) string {
 }
 
 // ToBool converts an interface{} to bool with a default value.
-func ToBool(val interface{}, defaultValue bool) bool {
+func ToBool(val any, defaultValue bool) bool {
 	switch v := val.(type) {
 	case bool:
 		return v
@@ -109,14 +109,14 @@ func ToBool(val interface{}, defaultValue bool) bool {
 }
 
 // ToMapStringInterface safely converts an interface{} to map[string]interface{}.
-func ToMapStringInterface(val interface{}) (map[string]interface{}, bool) {
-	m, ok := val.(map[string]interface{})
+func ToMapStringInterface(val any) (map[string]any, bool) {
+	m, ok := val.(map[string]any)
 	return m, ok
 }
 
 // ToSliceInterface safely converts an interface{} to []interface{}.
-func ToSliceInterface(val interface{}) ([]interface{}, bool) {
-	s, ok := val.([]interface{})
+func ToSliceInterface(val any) ([]any, bool) {
+	s, ok := val.([]any)
 	return s, ok
 }
 

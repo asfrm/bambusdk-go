@@ -3,9 +3,10 @@ package fleet
 
 import (
 	"fmt"
+	"maps"
 	"sync"
 
-	"github.com/asfrm/bambuapi-go/printer"
+	"github.com/asfrm/bambusdk-go/printer"
 )
 
 // PrinterConfig holds the configuration for a printer.
@@ -323,9 +324,7 @@ func (p *PrinterPool) GetStatus() PoolStatus {
 func (p *PrinterPool) ForEachPrinter(fn func(serial string, prtr *printer.Printer)) {
 	p.mu.RLock()
 	printers := make(map[string]*printer.Printer)
-	for serial, prtr := range p.printers {
-		printers[serial] = prtr
-	}
+	maps.Copy(printers, p.printers)
 	p.mu.RUnlock()
 
 	var wg sync.WaitGroup
@@ -360,4 +359,77 @@ func (p *PrinterPool) SetStateUpdateCallback(callback func(serial string)) {
 			callback(s)
 		})
 	}
+}
+
+// PrinterStatus contains the status of a single printer.
+type PrinterStatus struct {
+	Serial      string
+	State       string
+	Progress    int
+	NozzleTemp  float64
+	BedTemp     float64
+	ChamberTemp float64
+}
+
+// BroadcastGcode sends a G-code command to all connected printers.
+// Returns a map of serial numbers to success results.
+func (p *PrinterPool) BroadcastGcode(gcode string, gcodeCheck bool) map[string]bool {
+	p.mu.RLock()
+	printers := make(map[string]*printer.Printer)
+	maps.Copy(printers, p.printers)
+	p.mu.RUnlock()
+
+	results := make(map[string]bool)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	for serial, prtr := range printers {
+		wg.Add(1)
+		go func(serial string, prtr *printer.Printer) {
+			defer wg.Done()
+			success, err := prtr.Gcode(gcode, gcodeCheck)
+			mu.Lock()
+			if err != nil {
+				results[serial] = false
+			} else {
+				results[serial] = success
+			}
+			mu.Unlock()
+		}(serial, prtr)
+	}
+	wg.Wait()
+	return results
+}
+
+// BroadcastStatus gets the status from all connected printers.
+// Returns a map of serial numbers to PrinterStatus.
+func (p *PrinterPool) BroadcastStatus() map[string]*PrinterStatus {
+	p.mu.RLock()
+	printers := make(map[string]*printer.Printer)
+	maps.Copy(printers, p.printers)
+	p.mu.RUnlock()
+
+	results := make(map[string]*PrinterStatus)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	for serial, prtr := range printers {
+		wg.Add(1)
+		go func(serial string, prtr *printer.Printer) {
+			defer wg.Done()
+			status := &PrinterStatus{
+				Serial:      serial,
+				State:       prtr.GetState().String(),
+				Progress:    prtr.GetPercentage(),
+				NozzleTemp:  prtr.GetNozzleTemperature(),
+				BedTemp:     prtr.GetBedTemperature(),
+				ChamberTemp: prtr.GetChamberTemperature(),
+			}
+			mu.Lock()
+			results[serial] = status
+			mu.Unlock()
+		}(serial, prtr)
+	}
+	wg.Wait()
+	return results
 }

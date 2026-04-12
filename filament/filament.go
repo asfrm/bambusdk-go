@@ -330,7 +330,7 @@ type FilamentTray struct {
 }
 
 // FilamentTrayFromDict creates a FilamentTray from a map.
-func FilamentTrayFromDict(d map[string]interface{}) FilamentTray {
+func FilamentTrayFromDict(d map[string]any) FilamentTray {
 	tray := FilamentTray{}
 
 	if v, ok := d["k"]; ok {
@@ -408,7 +408,7 @@ func FilamentTrayFromDict(d map[string]interface{}) FilamentTray {
 		tray.TrayUUID = fmt.Sprintf("%v", v)
 	}
 	if v, ok := d["cols"]; ok {
-		if cols, ok := v.([]interface{}); ok {
+		if cols, ok := v.([]any); ok {
 			tray.Cols = make([]string, len(cols))
 			for i, col := range cols {
 				tray.Cols[i] = fmt.Sprintf("%v", col)
@@ -421,7 +421,7 @@ func FilamentTrayFromDict(d map[string]interface{}) FilamentTray {
 
 // FilamentTrayFromJSON creates a FilamentTray from JSON.
 func FilamentTrayFromJSON(data []byte) (FilamentTray, error) {
-	var d map[string]interface{}
+	var d map[string]any
 	if err := json.Unmarshal(data, &d); err != nil {
 		return FilamentTray{}, err
 	}

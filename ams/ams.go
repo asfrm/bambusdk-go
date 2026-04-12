@@ -1,7 +1,7 @@
 // Package ams provides AMS (Automated Material System) support for Bambu Lab printers.
 package ams
 
-import "github.com/asfrm/bambuapi-go/filament"
+import "github.com/asfrm/bambusdk-go/filament"
 
 // AMS represents the Bambu Lab AMS (Automated Material System).
 type AMS struct {
@@ -33,7 +33,7 @@ func (a *AMS) GetFilamentTray(trayIndex int) *filament.FilamentTray {
 }
 
 // ProcessTrays processes a list of tray data.
-func (a *AMS) ProcessTrays(trays []map[string]interface{}) {
+func (a *AMS) ProcessTrays(trays []map[string]any) {
 	for _, t := range trays {
 		var id int
 		if v, ok := t["id"]; ok {
@@ -77,7 +77,7 @@ func (h *AMSHub) Set(index int, ams *AMS) {
 }
 
 // ParseList parses a list of AMS data.
-func (h *AMSHub) ParseList(amsList []map[string]interface{}) {
+func (h *AMSHub) ParseList(amsList []map[string]any) {
 	for _, a := range amsList {
 		var id int
 		if v, ok := a["id"]; ok {
@@ -108,10 +108,10 @@ func (h *AMSHub) ParseList(amsList []map[string]interface{}) {
 		}
 
 		ams := NewAMS(humidity, temp)
-		if trays, ok := a["tray"].([]interface{}); ok {
-			trayMaps := make([]map[string]interface{}, len(trays))
+		if trays, ok := a["tray"].([]any); ok {
+			trayMaps := make([]map[string]any, len(trays))
 			for i, t := range trays {
-				if tm, ok := t.(map[string]interface{}); ok {
+				if tm, ok := t.(map[string]any); ok {
 					trayMaps[i] = tm
 				}
 			}

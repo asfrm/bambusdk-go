@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/asfrm/bambuapi-go/filament"
-	"github.com/asfrm/bambuapi-go/printer"
-	"github.com/asfrm/bambuapi-go/states"
+	"github.com/asfrm/bambusdk-go/filament"
+	"github.com/asfrm/bambusdk-go/printer"
+	"github.com/asfrm/bambusdk-go/states"
 )
 
 // Config holds the printer connection configuration.
@@ -121,7 +121,7 @@ func connectMQTT(cfg Config) (*printer.Printer, error) {
 
 // printStatusJSON prints the printer status in JSON format.
 func printStatusJSON(p *printer.Printer) error {
-	status := map[string]interface{}{
+	status := map[string]any{
 		"state":               p.GetState().String(),
 		"print_status":        p.GetCurrentState().String(),
 		"nozzle_temperature":  p.GetNozzleTemperature(),
@@ -196,7 +196,9 @@ func cmdStatus(p *printer.Printer, args []string) error {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	jsonOutput := fs.Bool("json", false, "Output status as JSON")
 	watch := fs.Bool("watch", false, "Continuously watch status (Ctrl+C to stop)")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	if *watch {
 		return watchStatus(p, *jsonOutput)
@@ -214,22 +216,20 @@ func watchStatus(p *printer.Printer, jsonOutput bool) error {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ticker.C:
-			if !p.MQTTClientConnected() {
-				return fmt.Errorf("MQTT connection lost")
-			}
-			if jsonOutput {
-				if err := printStatusJSON(p); err != nil {
-					return err
-				}
-			} else {
-				printStatusHuman(p)
-			}
-			fmt.Println()
+	for range ticker.C {
+		if !p.MQTTClientConnected() {
+			return fmt.Errorf("MQTT connection lost")
 		}
+		if jsonOutput {
+			if err := printStatusJSON(p); err != nil {
+				return err
+			}
+		} else {
+			printStatusHuman(p)
+		}
+		fmt.Println()
 	}
+	return nil
 }
 
 // cmdHome handles the home command.
@@ -239,11 +239,11 @@ func cmdHome(p *printer.Printer, args []string) error {
 		return fmt.Errorf("safety check: cannot home while printer is RUNNING")
 	}
 
-	if p.HomePrinter() {
-		fmt.Println("Homing printer (G28)...")
-		return nil
+	if err := p.HomePrinter(); err != nil {
+		return fmt.Errorf("failed to home printer: %w", err)
 	}
-	return fmt.Errorf("failed to home printer")
+	fmt.Println("Homing printer (G28)...")
+	return nil
 }
 
 // cmdTemp handles the temp command.
@@ -251,7 +251,9 @@ func cmdTemp(p *printer.Printer, args []string) error {
 	fs := flag.NewFlagSet("temp", flag.ExitOnError)
 	nozzleTemp := fs.Int("nozzle", 0, "Set nozzle temperature (°C)")
 	bedTemp := fs.Int("bed", 0, "Set bed temperature (°C)")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	if *nozzleTemp == 0 && *bedTemp == 0 {
 		// Just show current temperatures
@@ -263,19 +265,17 @@ func cmdTemp(p *printer.Printer, args []string) error {
 	}
 
 	if *nozzleTemp > 0 {
-		if p.SetNozzleTemperature(*nozzleTemp) {
-			fmt.Printf("Setting nozzle temperature to %d°C...\n", *nozzleTemp)
-		} else {
-			return fmt.Errorf("failed to set nozzle temperature")
+		if err := p.SetNozzleTemperature(*nozzleTemp); err != nil {
+			return fmt.Errorf("failed to set nozzle temperature: %w", err)
 		}
+		fmt.Printf("Setting nozzle temperature to %d°C...\n", *nozzleTemp)
 	}
 
 	if *bedTemp > 0 {
-		if p.SetBedTemperature(*bedTemp) {
-			fmt.Printf("Setting bed temperature to %d°C...\n", *bedTemp)
-		} else {
-			return fmt.Errorf("failed to set bed temperature")
+		if err := p.SetBedTemperature(*bedTemp); err != nil {
+			return fmt.Errorf("failed to set bed temperature: %w", err)
 		}
+		fmt.Printf("Setting bed temperature to %d°C...\n", *bedTemp)
 	}
 
 	return nil
@@ -287,38 +287,21 @@ func cmdLight(p *printer.Printer, args []string) error {
 		return fmt.Errorf("usage: bambu-cli light <on|off>")
 	}
 
-	// Use a channel to handle the result with timeout
-	done := make(chan bool, 1)
-	var result bool
-
+	var err error
 	switch strings.ToLower(args[0]) {
 	case "on":
-		go func() {
-			result = p.TurnLightOn()
-			done <- true
-		}()
+		err = p.TurnLightOn()
 	case "off":
-		go func() {
-			result = p.TurnLightOff()
-			done <- true
-		}()
+		err = p.TurnLightOff()
 	default:
 		return fmt.Errorf("invalid argument: %s (use 'on' or 'off')", args[0])
 	}
 
-	// Wait for result with timeout
-	select {
-	case <-done:
-		if result {
-			fmt.Printf("Turning light %s...\n", strings.ToUpper(args[0]))
-			return nil
-		}
-		return fmt.Errorf("failed to turn light %s", args[0])
-	case <-time.After(3 * time.Second):
-		// Even if timeout, the command was likely sent
-		fmt.Printf("Command sent: light %s\n", strings.ToUpper(args[0]))
-		return nil
+	if err != nil {
+		return fmt.Errorf("failed to turn light %s: %w", args[0], err)
 	}
+	fmt.Printf("Turning light %s...\n", strings.ToUpper(args[0]))
+	return nil
 }
 
 // cmdGcode handles the gcode command.
@@ -342,29 +325,29 @@ func cmdGcode(p *printer.Printer, args []string) error {
 
 // cmdPause handles the pause command.
 func cmdPause(p *printer.Printer, args []string) error {
-	if p.PausePrint() {
-		fmt.Println("Pausing print...")
-		return nil
+	if err := p.PausePrint(); err != nil {
+		return fmt.Errorf("failed to pause print: %w", err)
 	}
-	return fmt.Errorf("failed to pause print")
+	fmt.Println("Pausing print...")
+	return nil
 }
 
 // cmdResume handles the resume command.
 func cmdResume(p *printer.Printer, args []string) error {
-	if p.ResumePrint() {
-		fmt.Println("Resuming print...")
-		return nil
+	if err := p.ResumePrint(); err != nil {
+		return fmt.Errorf("failed to resume print: %w", err)
 	}
-	return fmt.Errorf("failed to resume print")
+	fmt.Println("Resuming print...")
+	return nil
 }
 
 // cmdStop handles the stop command.
 func cmdStop(p *printer.Printer, args []string) error {
-	if p.StopPrint() {
-		fmt.Println("Stopping print...")
-		return nil
+	if err := p.StopPrint(); err != nil {
+		return fmt.Errorf("failed to stop print: %w", err)
 	}
-	return fmt.Errorf("failed to stop print")
+	fmt.Println("Stopping print...")
+	return nil
 }
 
 // cmdFan handles the fan command.
@@ -375,29 +358,29 @@ func cmdFan(p *printer.Printer, args []string) error {
 
 	fanType := strings.ToLower(args[0])
 	speed := 0
-	fmt.Sscanf(args[1], "%d", &speed)
+	_, _ = fmt.Sscanf(args[1], "%d", &speed)
 
 	if speed < 0 || speed > 255 {
 		return fmt.Errorf("fan speed must be between 0 and 255")
 	}
 
-	var success bool
+	var err error
 	switch fanType {
 	case "part":
-		success = p.SetPartFanSpeedInt(speed)
+		err = p.SetPartFanSpeedInt(speed)
 	case "aux":
-		success = p.SetAuxFanSpeedInt(speed)
+		err = p.SetAuxFanSpeedInt(speed)
 	case "chamber":
-		success = p.SetChamberFanSpeedInt(speed)
+		err = p.SetChamberFanSpeedInt(speed)
 	default:
 		return fmt.Errorf("unknown fan type: %s (use part|aux|chamber)", fanType)
 	}
 
-	if success {
-		fmt.Printf("Setting %s fan speed to %d...\n", fanType, speed)
-		return nil
+	if err != nil {
+		return fmt.Errorf("failed to set %s fan speed: %w", fanType, err)
 	}
-	return fmt.Errorf("failed to set %s fan speed", fanType)
+	fmt.Printf("Setting %s fan speed to %d...\n", fanType, speed)
+	return nil
 }
 
 // cmdSpeed handles the speed command.
@@ -409,18 +392,18 @@ func cmdSpeed(p *printer.Printer, args []string) error {
 	}
 
 	level := 0
-	fmt.Sscanf(args[0], "%d", &level)
+	_, _ = fmt.Sscanf(args[0], "%d", &level)
 
 	if level < 0 || level > 3 {
 		return fmt.Errorf("speed level must be between 0 and 3 (silent, standard, sport, ludicrous)")
 	}
 
-	if p.SetPrintSpeed(level) {
-		speedNames := []string{"Silent", "Standard", "Sport", "Ludicrous"}
-		fmt.Printf("Setting print speed to %s (level %d)...\n", speedNames[level], level)
-		return nil
+	if err := p.SetPrintSpeed(level); err != nil {
+		return fmt.Errorf("failed to set print speed: %w", err)
 	}
-	return fmt.Errorf("failed to set print speed")
+	speedNames := []string{"Silent", "Standard", "Sport", "Ludicrous"}
+	fmt.Printf("Setting print speed to %s (level %d)...\n", speedNames[level], level)
+	return nil
 }
 
 // cmdCalibrate handles the calibrate command.
@@ -429,7 +412,9 @@ func cmdCalibrate(p *printer.Printer, args []string) error {
 	bedLevel := fs.Bool("bed", false, "Run bed leveling")
 	motorNoise := fs.Bool("motor", false, "Run motor noise calibration")
 	vibration := fs.Bool("vibration", false, "Run vibration compensation")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	if !*bedLevel && !*motorNoise && !*vibration {
 		// Default to all
@@ -438,20 +423,20 @@ func cmdCalibrate(p *printer.Printer, args []string) error {
 		*vibration = true
 	}
 
-	if p.CalibratePrinter(*bedLevel, *motorNoise, *vibration) {
-		fmt.Println("Starting calibration...")
-		if *bedLevel {
-			fmt.Println("  - Bed leveling")
-		}
-		if *motorNoise {
-			fmt.Println("  - Motor noise calibration")
-		}
-		if *vibration {
-			fmt.Println("  - Vibration compensation")
-		}
-		return nil
+	if err := p.CalibratePrinter(*bedLevel, *motorNoise, *vibration); err != nil {
+		return fmt.Errorf("failed to start calibration: %w", err)
 	}
-	return fmt.Errorf("failed to start calibration")
+	fmt.Println("Starting calibration...")
+	if *bedLevel {
+		fmt.Println("  - Bed leveling")
+	}
+	if *motorNoise {
+		fmt.Println("  - Motor noise calibration")
+	}
+	if *vibration {
+		fmt.Println("  - Vibration compensation")
+	}
+	return nil
 }
 
 // cmdFilament handles the filament command.
@@ -462,23 +447,23 @@ func cmdFilament(p *printer.Printer, args []string) error {
 
 	switch strings.ToLower(args[0]) {
 	case "load":
-		if p.LoadFilamentSpool() {
-			fmt.Println("Loading filament...")
-			return nil
+		if err := p.LoadFilamentSpool(); err != nil {
+			return fmt.Errorf("failed to load filament: %w", err)
 		}
-		return fmt.Errorf("failed to load filament")
+		fmt.Println("Loading filament...")
+		return nil
 	case "unload":
-		if p.UnloadFilamentSpool() {
-			fmt.Println("Unloading filament...")
-			return nil
+		if err := p.UnloadFilamentSpool(); err != nil {
+			return fmt.Errorf("failed to unload filament: %w", err)
 		}
-		return fmt.Errorf("failed to unload filament")
+		fmt.Println("Unloading filament...")
+		return nil
 	case "retry":
-		if p.RetryFilamentAction() {
-			fmt.Println("Retrying filament action...")
-			return nil
+		if err := p.RetryFilamentAction(); err != nil {
+			return fmt.Errorf("failed to retry filament action: %w", err)
 		}
-		return fmt.Errorf("failed to retry filament action")
+		fmt.Println("Retrying filament action...")
+		return nil
 	default:
 		return fmt.Errorf("unknown filament action: %s (use load|unload|retry)", args[0])
 	}
@@ -487,11 +472,11 @@ func cmdFilament(p *printer.Printer, args []string) error {
 // cmdReboot handles the reboot command.
 func cmdReboot(p *printer.Printer, args []string) error {
 	fmt.Println("WARNING: This will reboot the printer!")
-	if p.Reboot() {
-		fmt.Println("Sending reboot command...")
-		return nil
+	if err := p.Reboot(); err != nil {
+		return fmt.Errorf("failed to send reboot command: %w", err)
 	}
-	return fmt.Errorf("failed to send reboot command")
+	fmt.Println("Sending reboot command...")
+	return nil
 }
 
 // cmdFirmware handles the firmware command.
@@ -509,11 +494,11 @@ func cmdFirmware(p *printer.Printer, args []string) error {
 
 	switch strings.ToLower(args[0]) {
 	case "upgrade":
-		if p.UpgradeFirmware(false) {
-			fmt.Println("Starting firmware upgrade...")
-			return nil
+		if err := p.UpgradeFirmware(false); err != nil {
+			return fmt.Errorf("failed to start firmware upgrade: %w", err)
 		}
-		return fmt.Errorf("failed to start firmware upgrade")
+		fmt.Println("Starting firmware upgrade...")
+		return nil
 	default:
 		return fmt.Errorf("unknown firmware action: %s (use upgrade)", args[0])
 	}
@@ -526,11 +511,11 @@ func cmdInfo(p *printer.Printer, args []string) error {
 	fmt.Println("=== Printer Information ===")
 	fmt.Println()
 
-	if info, ok := dump["info"].(map[string]interface{}); ok {
-		if modules, ok := info["module"].([]interface{}); ok {
+	if info, ok := dump["info"].(map[string]any); ok {
+		if modules, ok := info["module"].([]any); ok {
 			fmt.Println("--- Firmware Modules ---")
 			for _, m := range modules {
-				if module, ok := m.(map[string]interface{}); ok {
+				if module, ok := m.(map[string]any); ok {
 					if name, ok := module["name"].(string); ok {
 						if ver, ok := module["sw_ver"].(string); ok {
 							fmt.Printf("  %-15s %s\n", name, ver)
@@ -590,7 +575,9 @@ func cmdCamera(p *printer.Printer, args []string) error {
 	count := fs.Int("n", 1, "Number of frames to capture (0 for continuous until Ctrl+C)")
 	interval := fs.Duration("i", 1*time.Second, "Interval between frames (for multi-frame capture)")
 	timeout := fs.Duration("timeout", 10*time.Second, "Timeout for waiting for each frame")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	if *count == 1 {
 		// Single frame capture
@@ -601,7 +588,7 @@ func cmdCamera(p *printer.Printer, args []string) error {
 			return fmt.Errorf("failed to capture frame: %w", err)
 		}
 
-		if err := os.WriteFile(*outputFile, frameBytes, 0644); err != nil {
+		if err := os.WriteFile(*outputFile, frameBytes, 0600); err != nil {
 			return fmt.Errorf("failed to save image: %w", err)
 		}
 
@@ -625,7 +612,7 @@ func cmdCamera(p *printer.Printer, args []string) error {
 			filename = fmt.Sprintf("%s_%d.jpg", strings.TrimSuffix(*outputFile, ".jpg"), i+1)
 		}
 
-		if err := os.WriteFile(filename, frameBytes, 0644); err != nil {
+		if err := os.WriteFile(filename, frameBytes, 0600); err != nil {
 			return fmt.Errorf("failed to save frame %d: %w", i+1, err)
 		}
 
@@ -678,7 +665,9 @@ func cmdPrint(p *printer.Printer, args []string) error {
 	amsMapping := fs.Int("ams-map", 0, "AMS slot mapping (0-7)")
 	flowCalib := fs.Bool("flow-calib", true, "Enable flow calibration")
 	bedType := fs.String("bed", "textured_plate", "Bed type (textured_plate, smooth_plate, etc.)")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	if len(fs.Args()) < 1 {
 		return fmt.Errorf("missing file argument")
@@ -755,33 +744,33 @@ Other Examples:
 `)
 }
 
-func main() {
+func run() int {
 	cfg, command, cmdArgs := loadConfig()
 
 	// Check if help is requested or no command provided
 	if len(os.Args) < 2 {
 		printUsage()
-		os.Exit(0)
+		return 0
 	}
 
 	// Handle help commands
 	if command == "-h" || command == "--help" || command == "help" {
 		printUsage()
-		os.Exit(0)
+		return 0
 	}
 
 	// Validate config for all commands except help
 	if err := validateConfig(cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n\n", err)
 		printUsage()
-		os.Exit(1)
+		return 1
 	}
 
 	// Connect to printer via MQTT only (no camera for commands)
 	p, err := connectMQTT(cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error connecting to printer: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	defer p.MQTTStop()
 
@@ -829,15 +818,17 @@ func main() {
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", command)
 		printUsage()
-		p.MQTTStop()
-		os.Exit(1)
+		return 1
 	}
 
 	if cmdErr != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", cmdErr)
-		os.Exit(1)
+		return 1
 	}
 
-	// Exit immediately without cleanup (MQTT goroutines will be killed)
-	os.Exit(0)
+	return 0
+}
+
+func main() {
+	os.Exit(run())
 }
