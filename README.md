@@ -1,10 +1,12 @@
-`# bambusdk-go
+bambusdk-go
 
 Native Go implementation of the Bambu Lab 3D Printer API.
 
 > **Note:** This is a native Go implementation of the Bambu Lab printer API for controlling Bambu Lab 3D printers.
 
-## Current Version: v1.0.4
+## Current Version: v1.0.5
+
+latest changes - remove unsupported Firmware-related funcs
 
 ### Supported Printers
 - **P1 Series**: P1P, P1S
