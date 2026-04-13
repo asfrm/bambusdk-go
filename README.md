@@ -1,17 +1,21 @@
+[![Go Report Card](https://goreportcard.com/badge/github.com/asfrm/bambusdk-go)](https://goreportcard.com/report/github.com/asfrm/bambusdk-go)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Go Reference](https://pkg.go.dev/badge/github.com/asfrm/bambusdk-go.svg)](https://pkg.go.dev/github.com/asfrm/bambusdk-go)
+
 bambusdk-go
 
 Native Go implementation of the Bambu Lab 3D Printer API.
 
 > **Note:** This is a native Go implementation of the Bambu Lab printer API for controlling Bambu Lab 3D printers.
 
-## Current Version: v1.0.5
+## Current Version: v1.0.6
 
 latest changes - remove unsupported Firmware-related funcs
 
 ### Supported Printers
-- **P1 Series**: P1P, P1S
-- **A1 Series**: A1, A1 Mini
-- **X1 Series**: X1C, X1E
+- **P1 Series**: P1P, P1S - not tested yet
+- **A1 Series**: A1, A1 Mini - ~85% coverage - camera stream not working.
+- **X1 Series**: X1C, X1E - not tested yet
 
 ### Security
 - **Configurable TLS Verification** - Enable certificate verification for production use
@@ -430,7 +434,7 @@ bambusdk-go/
 
 ## License
 
-MIT License - See LICENSE file for details
+This project is licensed under the GNU GPL v3.0. See the LICENSE file for details.
 
 ## Credits
 
@@ -438,6 +442,4 @@ This Go implementation is inspired by the Python [bambulabs_api](https://github.
 
 Special thanks to the BambuTools community for reverse-engineering the Bambu Lab printer protocol.
 
-## Repository
-
-GitHub: [github.com/asfrm/bambusdk-go](https://github.com/asfrm/bambusdk-go)
+Like it? Give it a ⭐.
