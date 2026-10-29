@@ -1,3 +1,6 @@
+# AI Generated
+# AI Generated
+# AI Generated 
 [![Go Report Card](https://goreportcard.com/badge/github.com/asfrm/bambusdk-go)](https://goreportcard.com/report/github.com/asfrm/bambusdk-go)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Go Reference](https://pkg.go.dev/badge/github.com/asfrm/bambusdk-go.svg)](https://pkg.go.dev/github.com/asfrm/bambusdk-go)
